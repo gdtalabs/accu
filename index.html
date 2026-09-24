@@ -2,13 +2,28 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f4a86" />
   <title>ACCU Clinic MVP</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <header class="mobile-header">
+    <button id="menuBtn" class="icon-btn" aria-label="Open navigation">☰</button>
+    <div class="mobile-brand">
+      <img src="accu-logo.jpeg" alt="ACCU logo" />
+      <div>
+        <strong>ACCU</strong>
+        <span id="mobileRoleLabel">Administrator</span>
+      </div>
+    </div>
+    <button id="mobileQuickBtn" class="mobile-quick" aria-label="Quick action">＋</button>
+  </header>
+
+  <div id="drawerBackdrop" class="drawer-backdrop"></div>
+
   <div class="app-shell">
-    <aside class="sidebar">
+    <aside id="sidebar" class="sidebar" aria-label="Primary navigation">
       <div class="brand">
         <img src="accu-logo.jpeg" alt="ACCU logo" />
         <div>
@@ -17,19 +32,24 @@
         </div>
       </div>
 
+      <div class="role-chip">
+        <span>Signed in as</span>
+        <strong id="desktopRoleLabel">Administrator</strong>
+      </div>
+
       <nav id="nav">
-        <button class="nav-item active" data-view="dashboard">Dashboard</button>
-        <button class="nav-item" data-view="patients">Patients</button>
-        <button class="nav-item" data-view="consultations">Consultations</button>
-        <button class="nav-item" data-view="laboratory">Laboratory</button>
-        <button class="nav-item" data-view="pharmacy">Pharmacy</button>
-        <button class="nav-item" data-view="pos">POS / Billing</button>
-        <button class="nav-item" data-view="reports">Reports</button>
-        <button class="nav-item" data-view="settings">Admin</button>
+        <button class="nav-item active" data-view="dashboard"><span class="nav-icon">⌂</span><span>Dashboard</span></button>
+        <button class="nav-item" data-view="patients"><span class="nav-icon">👤</span><span>Patients</span></button>
+        <button class="nav-item" data-view="consultations"><span class="nav-icon">🩺</span><span>Consultations</span></button>
+        <button class="nav-item" data-view="laboratory"><span class="nav-icon">🧪</span><span>Laboratory</span></button>
+        <button class="nav-item" data-view="pharmacy"><span class="nav-icon">💊</span><span>Pharmacy</span></button>
+        <button class="nav-item" data-view="pos"><span class="nav-icon">▣</span><span>POS / Billing</span></button>
+        <button class="nav-item" data-view="reports"><span class="nav-icon">▤</span><span>Reports</span></button>
+        <button class="nav-item" data-view="settings"><span class="nav-icon">⚙</span><span>Admin</span></button>
       </nav>
 
       <div class="sidebar-footer">
-        <label for="roleSelect">Active role</label>
+        <label for="roleSelect">Preview role</label>
         <select id="roleSelect">
           <option>Administrator</option>
           <option>Receptionist</option>
@@ -38,6 +58,7 @@
           <option>Pharmacist</option>
           <option>Cashier</option>
         </select>
+        <p class="role-help">Demo only — production permissions must be enforced on the server.</p>
         <button id="resetDemo" class="ghost danger">Reset demo data</button>
       </div>
     </aside>
@@ -47,6 +68,7 @@
         <div>
           <p class="eyebrow">ACCU Laboratory and Diagnostic Center</p>
           <h1 id="pageTitle">Dashboard</h1>
+          <p id="roleContext" class="role-context"></p>
         </div>
         <div class="top-actions">
           <span id="todayLabel" class="muted"></span>
@@ -64,6 +86,8 @@
       <section id="settings" class="view"></section>
     </main>
   </div>
+
+  <nav id="mobileBottomNav" class="mobile-bottom-nav" aria-label="Mobile navigation"></nav>
 
   <div id="modalRoot"></div>
   <script src="app.js"></script>
