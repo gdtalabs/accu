@@ -26,6 +26,7 @@ const seed = {
     {id:'SRV-XRAY',type:'Diagnostic',name:'Chest X-ray',price:600}
   ],
   transactions: [],
+  clinic: {name:'ACCU Laboratory and Diagnostic Center',address:'',contact:'',tin:'',receiptFooter:'Thank you for choosing ACCU.'},
   audit: [{ts:new Date().toISOString(),user:'Administrator',action:'Demo database initialized'}]
 };
 
@@ -84,7 +85,7 @@ const ROLE_CONFIG = {
 
 let db = load();
 let cart = [];
-let saleDraft = {patientId:'',payment:'Cash'};
+let saleDraft = {patientId:'',payment:'Cash',tendered:''};
 let activeRole = localStorage.getItem(ROLE_KEY) || 'Administrator';
 if(!ROLE_CONFIG[activeRole]) activeRole = 'Administrator';
 let activeView = 'dashboard';
@@ -98,6 +99,8 @@ function load(){
     parsed.transactions ||= [];
     parsed.labOrders ||= [];
     parsed.consultations ||= [];
+    parsed.clinic ||= structuredClone(seed.clinic);
+    parsed.clinic = {...structuredClone(seed.clinic), ...parsed.clinic};
     return parsed;
   }catch{return structuredClone(seed)}
 }
@@ -317,8 +320,24 @@ window.openMedicineModal=function(){
 };
 
 function captureSaleDraft(){
-  const p=document.getElementById('salePatient');const pay=document.getElementById('payMethod');
-  if(p)saleDraft.patientId=p.value;if(pay)saleDraft.payment=pay.value;
+  const p=document.getElementById('salePatient');
+  const pay=document.getElementById('payMethod');
+  const tendered=document.getElementById('amountTendered');
+  if(p)saleDraft.patientId=p.value;
+  if(pay)saleDraft.payment=pay.value;
+  if(tendered)saleDraft.tendered=tendered.value;
+}
+function cartTotal(){return cart.reduce((a,b)=>a+b.price*b.qty,0)}
+function paymentFields(){
+  const total=cartTotal();
+  const isCash=saleDraft.payment==='Cash';
+  const tendered=Number(saleDraft.tendered||0);
+  const change=isCash?Math.max(0,tendered-total):0;
+  return `<div class="payment-panel">
+    <div class="field"><label>Payment method</label><select id="payMethod" onchange="changePaymentMethod(this.value)">${['Cash','GCash','Maya','Bank Transfer','Other'].map(m=>`<option ${saleDraft.payment===m?'selected':''}>${m}</option>`).join('')}</select></div>
+    ${isCash?`<div class="field"><label>Amount tendered</label><input id="amountTendered" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(saleDraft.tendered)}" placeholder="0.00" oninput="updateChangePreview(this.value)"></div>
+    <div class="cash-change-box"><span>Change</span><strong id="changePreview">${money(change)}</strong></div>`:`<div class="cash-change-box noncash"><span>Amount due</span><strong>${money(total)}</strong></div>`}
+  </div>`;
 }
 function renderPOS(){
   if(!canView('pos'))return;
@@ -327,24 +346,76 @@ function renderPOS(){
   const medicines=db.inventory.filter(i=>i.qty>0&&daysUntil(i.expiry)>=0).sort((a,b)=>new Date(a.expiry)-new Date(b.expiry));
   const serviceCard=services.length?`<div class="card"><div class="section-head"><h2>Services</h2></div><div class="catalog">${services.map(s=>`<button class="catalog-item" onclick="addService('${s.id}')"><strong>${esc(s.name)}</strong><span>${s.type} · ${money(s.price)}</span></button>`).join('')}</div></div>`:'';
   document.getElementById('pos').innerHTML=`<div class="pos-layout"><div>${serviceCard}<div class="card" style="${services.length?'margin-top:16px':''}"><div class="section-head"><h2>${pharmacist?'Medicines':'Pharmacy'}</h2></div><div class="catalog">${medicines.map(i=>`<button class="catalog-item" onclick="addMedicine('${i.id}')"><strong>${esc(i.generic)} ${esc(i.strength)}</strong><span>${esc(i.brand)} · ${esc(i.batch)} · Exp ${i.expiry}<br>Stock ${i.qty} · ${money(i.sell)}</span></button>`).join('')||'<div class="empty">No saleable medicine batches.</div>'}</div></div></div>
-    <div class="card"><div class="section-head"><h2>${pharmacist?'Pharmacy Sale':'Current Bill'}</h2><button class="ghost" onclick="clearCart()">Clear</button></div><div class="field"><label>Patient</label><select id="salePatient" onchange="saleDraft.patientId=this.value"><option value="">Walk-in</option>${db.patients.map(p=>`<option value="${p.id}" ${saleDraft.patientId===p.id?'selected':''}>${esc(p.name)} (${p.id})</option>`).join('')}</select></div><div id="cartLines">${cart.length?cart.map((x,idx)=>`<div class="cart-line"><div><strong>${esc(x.name)}</strong><br><span class="muted">${x.kind}</span></div><input type="number" min="1" value="${x.qty}" onchange="updateCartQty(${idx},this.value)"><div>${money(x.price*x.qty)}</div><button class="close-x" onclick="removeCartItem(${idx})">×</button></div>`).join(''):'<div class="empty">Add services or medicines to the bill.</div>'}</div>${saleSummary()}<div class="field" style="margin-top:12px"><label>Payment method</label><select id="payMethod" onchange="saleDraft.payment=this.value">${['Cash','GCash','Maya','Bank Transfer','Other'].map(m=>`<option ${saleDraft.payment===m?'selected':''}>${m}</option>`).join('')}</select></div><button class="primary" style="width:100%;margin-top:12px" onclick="checkout()" ${cart.length?'':'disabled'}>Complete Transaction</button></div></div>`;
+    <div class="card"><div class="section-head"><h2>${pharmacist?'Pharmacy Sale':'Current Bill'}</h2><button class="ghost" onclick="clearCart()">Clear</button></div><div class="field"><label>Patient</label><select id="salePatient" onchange="saleDraft.patientId=this.value"><option value="">Walk-in</option>${db.patients.map(p=>`<option value="${p.id}" ${saleDraft.patientId===p.id?'selected':''}>${esc(p.name)} (${p.id})</option>`).join('')}</select></div><div id="cartLines">${cart.length?cart.map((x,idx)=>`<div class="cart-line"><div><strong>${esc(x.name)}</strong><br><span class="muted">${x.kind}</span></div><input type="number" min="1" value="${x.qty}" onchange="updateCartQty(${idx},this.value)"><div>${money(x.price*x.qty)}</div><button class="close-x" onclick="removeCartItem(${idx})">×</button></div>`).join(''):'<div class="empty">Add services or medicines to the bill.</div>'}</div>${saleSummary()}${paymentFields()}<button class="primary checkout-btn" onclick="checkout()" ${cart.length?'':'disabled'}>Complete Transaction</button></div></div>`;
 }
+window.changePaymentMethod=function(value){captureSaleDraft();saleDraft.payment=value;if(value!=='Cash')saleDraft.tendered='';renderPOS()};
+window.updateChangePreview=function(value){saleDraft.tendered=value;const el=document.getElementById('changePreview');if(el)el.textContent=money(Math.max(0,Number(value||0)-cartTotal()))};
 window.addService=function(id){if(!can('checkout'))return;captureSaleDraft();const s=db.services.find(x=>x.id===id);addCartLine({kind:s.type,refId:s.id,name:s.name,qty:1,price:s.price});renderPOS()};
 window.addMedicine=function(id){if(!can('checkout'))return;captureSaleDraft();const m=db.inventory.find(x=>x.id===id);addCartLine({kind:'Pharmacy',refId:m.id,name:`${m.generic} ${m.strength}`,qty:1,price:m.sell});renderPOS()};
 function addCartLine(line){const existing=cart.find(x=>x.kind===line.kind&&x.refId===line.refId);if(existing)existing.qty+=1;else cart.push(line)}
 window.updateCartQty=function(idx,value){if(!can('checkout'))return;captureSaleDraft();cart[idx].qty=Math.max(1,+value||1);renderPOS()};
 window.removeCartItem=function(idx){if(!can('checkout'))return;captureSaleDraft();cart.splice(idx,1);renderPOS()};
-window.clearCart=function(){if(!can('checkout'))return;captureSaleDraft();cart=[];renderPOS()};
-function saleSummary(){const sub=cart.reduce((a,b)=>a+b.price*b.qty,0);return `<div class="summary-box" style="margin-top:14px"><div class="summary-row"><span>Subtotal</span><strong>${money(sub)}</strong></div><div class="summary-row"><span>Discount</span><strong>${money(0)}</strong></div><div class="summary-row total"><span>Total</span><span>${money(sub)}</span></div></div>`}
+window.clearCart=function(){if(!can('checkout'))return;captureSaleDraft();cart=[];saleDraft.tendered='';renderPOS()};
+function saleSummary(){const sub=cartTotal();return `<div class="summary-box" style="margin-top:14px"><div class="summary-row"><span>Subtotal</span><strong>${money(sub)}</strong></div><div class="summary-row"><span>Discount</span><strong>${money(0)}</strong></div><div class="summary-row total"><span>Total</span><span>${money(sub)}</span></div></div>`}
 window.checkout=function(){
-  if(!guard('checkout')||!cart.length)return;captureSaleDraft();
+  if(!guard('checkout')||!cart.length)return;
+  captureSaleDraft();
   for(const line of cart.filter(x=>x.kind==='Pharmacy')){const inv=db.inventory.find(i=>i.id===line.refId);if(!inv||inv.qty<line.qty)return alert(`Insufficient stock for ${line.name}.`)}
-  const items=structuredClone(cart);for(const line of items.filter(x=>x.kind==='Pharmacy'))db.inventory.find(i=>i.id===line.refId).qty-=line.qty;
-  const total=items.reduce((a,b)=>a+b.price*b.qty,0),id=nextId('TXN',db.transactions);
-  const txn={id,date:today(),time:new Date().toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}),patientId:saleDraft.patientId||null,payment:saleDraft.payment,total,items};
-  db.transactions.unshift(txn);cart=[];saleDraft={patientId:'',payment:'Cash'};save(`Completed transaction ${id} (${money(total)})`);showReceipt(txn);
+  const total=cartTotal();
+  const isCash=saleDraft.payment==='Cash';
+  const tendered=isCash?Number(saleDraft.tendered||0):total;
+  if(isCash&&tendered<total)return alert(`Amount tendered is ${money(tendered)}. Please enter at least ${money(total)}.`);
+  const change=isCash?Math.max(0,tendered-total):0;
+  const items=structuredClone(cart);
+  for(const line of items.filter(x=>x.kind==='Pharmacy'))db.inventory.find(i=>i.id===line.refId).qty-=line.qty;
+  const id=nextId('TXN',db.transactions);
+  const txn={id,date:today(),time:new Date().toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}),patientId:saleDraft.patientId||null,payment:saleDraft.payment,total,tendered,change,operator:activeRole,items};
+  db.transactions.unshift(txn);
+  cart=[];
+  saleDraft={patientId:'',payment:'Cash',tendered:''};
+  save(`Completed transaction ${id} (${money(total)})`);
+  showReceipt(txn);
 };
-function showReceipt(t){modal('Transaction Complete',`<div class="receipt"><h3>ACCU LABORATORY AND DIAGNOSTIC CENTER</h3><p>Clinic POS Receipt</p><p>${t.date} ${t.time}</p><p>${t.id}</p><hr><p style="text-align:left"><strong>Patient:</strong> ${esc(patientName(t.patientId))}</p><hr>${t.items.map(i=>`<div class="summary-row"><span>${esc(i.name)} ×${i.qty}</span><span>${money(i.price*i.qty)}</span></div>`).join('')}<hr><div class="summary-row total"><span>TOTAL</span><span>${money(t.total)}</span></div><p>Paid via ${esc(t.payment)}</p><p>Thank you.</p></div>`,null,'Close',`<button class="secondary no-print" onclick="window.print()">Print Receipt</button>`)}
+function receiptBody(t){
+  const clinic=db.clinic||seed.clinic;
+  const patient=t.patientId?patientName(t.patientId):'Walk-in';
+  const tendered=Number.isFinite(Number(t.tendered))?Number(t.tendered):Number(t.total||0);
+  const change=Number.isFinite(Number(t.change))?Number(t.change):0;
+  return `<div class="thermal-receipt" id="thermalReceipt">
+    <div class="receipt-brand"><img src="accu-logo.jpeg" alt="ACCU"><h3>${esc(clinic.name||'ACCU Laboratory and Diagnostic Center')}</h3><p><strong>SALES RECEIPT</strong></p>${clinic.address?`<p>${esc(clinic.address)}</p>`:''}${clinic.contact?`<p>${esc(clinic.contact)}</p>`:''}${clinic.tin?`<p>${esc(clinic.tin)}</p>`:''}</div>
+    <div class="receipt-rule"></div>
+    <div class="receipt-meta"><div><span>Transaction</span><strong>${esc(t.id)}</strong></div><div><span>Date</span><strong>${esc(t.date)} ${esc(t.time||'')}</strong></div><div><span>Patient</span><strong>${esc(patient)}</strong></div><div><span>Processed by</span><strong>${esc(t.operator||'Clinic Staff')}</strong></div></div>
+    <div class="receipt-rule"></div>
+    <div class="receipt-items">${t.items.map(i=>`<div class="receipt-item"><div><strong>${esc(i.name)}</strong><small>${i.qty} × ${money(i.price)}</small></div><strong>${money(i.price*i.qty)}</strong></div>`).join('')}</div>
+    <div class="receipt-rule"></div>
+    <div class="receipt-totals"><div><span>Total</span><strong>${money(t.total)}</strong></div><div><span>Payment</span><strong>${esc(t.payment)}</strong></div>${t.payment==='Cash'?`<div><span>Cash tendered</span><strong>${money(tendered)}</strong></div><div class="change"><span>Change</span><strong>${money(change)}</strong></div>`:''}</div>
+    <div class="receipt-rule"></div>
+    <p class="receipt-footer">${esc(clinic.receiptFooter||'Thank you for choosing ACCU.')}</p>
+    <p class="receipt-copy">${t.reprint?'REPRINTED COPY':''}</p>
+  </div>`;
+}
+function showReceipt(t){
+  modal('Transaction Complete',`${receiptBody(t)}<div class="receipt-print-note no-print"><strong>80 mm thermal receipt ready.</strong><br>Choose your installed thermal printer in the browser print dialog. Set paper size to 80 mm / Receipt if your driver provides it.</div>`,null,'Close',`<button class="secondary no-print" onclick="printReceipt('${t.id}',${t.reprint?'true':'false'})">${t.reprint?'Print Reprinted Copy':'Print 80mm Receipt'}</button>`)
+}
+window.reprintReceipt=function(id){
+  const t=db.transactions.find(x=>x.id===id);if(!t)return alert('Transaction not found.');
+  showReceipt({...t,reprint:true});
+};
+window.printReceipt=function(id,isReprint=false){
+  const original=db.transactions.find(x=>x.id===id);if(!original)return alert('Transaction not found.');
+  const t={...original,reprint:!!isReprint};
+  const receipt=receiptBody(t);
+  const w=window.open('','_blank','width=420,height=720');
+  if(!w)return alert('The print window was blocked. Please allow pop-ups for this site and try again.');
+  w.document.open();
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><base href="${esc(location.href)}"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(t.id)} Receipt</title><style>
+    @page{size:80mm auto;margin:0}
+    *{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;color:#000}body{width:80mm;font-family:Arial,Helvetica,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .thermal-receipt{width:72mm;margin:0 auto;padding:4mm 1.5mm 7mm;font-size:10.5px;line-height:1.32}.receipt-brand{text-align:center}.receipt-brand img{width:52mm;max-height:26mm;object-fit:contain;filter:grayscale(1);margin:0 auto 1.5mm;display:block}.receipt-brand h3{font-size:12px;margin:1mm 0;font-weight:800}.receipt-brand p{margin:.6mm 0;font-size:9.5px}.receipt-rule{border-top:1px dashed #000;margin:2.4mm 0}.receipt-meta>div,.receipt-totals>div{display:flex;justify-content:space-between;gap:4mm;margin:1mm 0}.receipt-meta span,.receipt-totals span{font-weight:400}.receipt-meta strong,.receipt-totals strong{text-align:right}.receipt-item{display:grid;grid-template-columns:1fr auto;gap:3mm;margin:1.8mm 0;align-items:start}.receipt-item strong{font-size:10.5px}.receipt-item small{display:block;font-size:9px;margin-top:.5mm}.receipt-totals>div:first-child{font-size:13px;font-weight:800}.receipt-totals .change{font-size:12px;font-weight:800}.receipt-footer{text-align:center;margin:3mm 0 1mm;font-size:9.5px}.receipt-copy{text-align:center;font-weight:800;margin:1mm 0;font-size:9px}
+    @media screen{body{margin:10px auto;border:1px solid #ddd;box-shadow:0 8px 30px rgba(0,0,0,.12)}}
+  </style></head><body>${receipt}<script>window.onload=()=>{setTimeout(()=>window.print(),250)}<\/script></body></html>`);
+  w.document.close();
+};
 
 function renderReports(){
   if(!canView('reports'))return;
@@ -358,13 +429,20 @@ function renderReports(){
   const cards=cashier?`${stat('Today’s Revenue',money(rev),'Completed transactions today')}${stat('Transactions',rows.length,'Today’s receipts')}${stat('Cash',money(rows.filter(t=>t.payment==='Cash').reduce((a,b)=>a+b.total,0)),'Cash payments')}${stat('Digital',money(rows.filter(t=>t.payment!=='Cash').reduce((a,b)=>a+b.total,0)),'Non-cash payments')}`:`${stat('Total Revenue',money(rev),'All recorded transactions')}${stat('Consultation',money(consult),'Billed consultation services')}${stat('Laboratory',money(lab),'Lab & diagnostic services')}${stat('Pharmacy',money(pharm),'Dispensed medicines')}`;
   document.getElementById('reports').innerHTML=`<div class="grid grid-4">${cards}</div><div class="section-head"><h2>${cashier?'Today’s Transaction Ledger':'Transaction Ledger'}</h2>${can('export')?'<button class="secondary" onclick="exportCSV()">Export CSV</button>':''}</div>${transactionsTable(rows)}`;
 }
-function transactionsTable(rows){return `<div class="table-wrap"><table class="responsive-table"><thead><tr><th>Transaction</th><th>Date</th><th>Patient</th><th>Items</th><th>Payment</th><th>Total</th></tr></thead><tbody>${rows.map(t=>`<tr><td data-label="Transaction">${t.id}</td><td data-label="Date">${t.date}<br><span class="muted">${t.time||''}</span></td><td data-label="Patient">${esc(patientName(t.patientId))}</td><td data-label="Items">${t.items.map(i=>`${esc(i.name)} ×${i.qty}`).join('<br>')}</td><td data-label="Payment">${esc(t.payment)}</td><td data-label="Total"><strong>${money(t.total)}</strong></td></tr>`).join('')||'<tr><td colspan="6" class="empty">No transactions yet.</td></tr>'}</tbody></table></div>`}
+function transactionsTable(rows){return `<div class="table-wrap"><table class="responsive-table"><thead><tr><th>Transaction</th><th>Date</th><th>Patient</th><th>Items</th><th>Payment</th><th>Total</th><th>Receipt</th></tr></thead><tbody>${rows.map(t=>`<tr><td data-label="Transaction">${t.id}</td><td data-label="Date">${t.date}<br><span class="muted">${t.time||''}</span></td><td data-label="Patient">${esc(patientName(t.patientId))}</td><td data-label="Items">${t.items.map(i=>`${esc(i.name)} ×${i.qty}`).join('<br>')}</td><td data-label="Payment">${esc(t.payment)}</td><td data-label="Total"><strong>${money(t.total)}</strong></td><td data-label="Receipt"><button class="small secondary" onclick="reprintReceipt('${t.id}')">Reprint</button></td></tr>`).join('')||'<tr><td colspan="7" class="empty">No transactions yet.</td></tr>'}</tbody></table></div>`}
 window.exportCSV=function(){if(!guard('export'))return;const rows=[['Transaction','Date','Patient','Payment','Total'],...db.transactions.map(t=>[t.id,t.date,patientName(t.patientId),t.payment,t.total])];const csv=rows.map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(',')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='accu-transactions.csv';a.click()};
 
 function renderSettings(){
   if(!canView('settings'))return;
-  document.getElementById('settings').innerHTML=`<div class="grid grid-2"><div class="card"><h2>Clinic Configuration</h2><p class="muted">This MVP stores data in this browser using localStorage. For production, move authentication and patient data to a secure server/database with backups.</p><div class="summary-row"><span>Patients</span><strong>${db.patients.length}</strong></div><div class="summary-row"><span>Services</span><strong>${db.services.length}</strong></div><div class="summary-row"><span>Medicine batches</span><strong>${db.inventory.length}</strong></div><div class="summary-row"><span>Transactions</span><strong>${db.transactions.length}</strong></div></div><div class="card"><h2>Role-based Views</h2><p class="muted">Administrator · Receptionist · Physician · Medical Technologist · Pharmacist · Cashier</p><div class="notice">The demo now hides modules and actions by role. This is still client-side only; production authorization must be enforced in the backend/database.</div></div></div><div class="section-head"><h2>Audit Log</h2></div><div class="table-wrap"><table class="responsive-table"><thead><tr><th>Timestamp</th><th>User / Role</th><th>Action</th></tr></thead><tbody>${db.audit.slice(0,100).map(a=>`<tr><td data-label="Timestamp">${new Date(a.ts).toLocaleString('en-PH')}</td><td data-label="Role">${esc(a.user)}</td><td data-label="Action">${esc(a.action)}</td></tr>`).join('')}</tbody></table></div>`;
+  const c=db.clinic||seed.clinic;
+  document.getElementById('settings').innerHTML=`<div class="grid grid-2"><div class="card"><h2>Clinic Configuration</h2><p class="muted">This MVP stores data in this browser using localStorage. For production, move authentication and patient data to a secure server/database with backups.</p><div class="summary-row"><span>Patients</span><strong>${db.patients.length}</strong></div><div class="summary-row"><span>Services</span><strong>${db.services.length}</strong></div><div class="summary-row"><span>Medicine batches</span><strong>${db.inventory.length}</strong></div><div class="summary-row"><span>Transactions</span><strong>${db.transactions.length}</strong></div></div><div class="card"><h2>Receipt Header</h2><p class="muted">These details appear on the 80 mm thermal receipt. Leave fields blank if not applicable.</p><div class="form-grid"><div class="field full"><label>Clinic name</label><input id="cfgClinicName" value="${esc(c.name||'')}"></div><div class="field full"><label>Address</label><input id="cfgAddress" value="${esc(c.address||'')}" placeholder="Clinic address"></div><div class="field"><label>Contact</label><input id="cfgContact" value="${esc(c.contact||'')}" placeholder="Phone / mobile"></div><div class="field"><label>TIN / registration line</label><input id="cfgTin" value="${esc(c.tin||'')}" placeholder="Optional"></div><div class="field full"><label>Receipt footer</label><input id="cfgFooter" value="${esc(c.receiptFooter||'')}"></div></div><button class="primary" style="margin-top:12px" onclick="saveReceiptConfig()">Save Receipt Details</button></div></div><div class="grid grid-2" style="margin-top:16px"><div class="card"><h2>Thermal Printer Setup</h2><p class="muted">The MVP uses the browser print dialog. Install the printer driver on the cashier computer, select the 80 mm receipt paper size, set margins to none/minimum, and disable browser headers/footers.</p><div class="notice">For silent/direct printing, auto-cut and cash-drawer commands, a production version can add an ESC/POS print bridge such as QZ Tray or a dedicated desktop POS client.</div></div><div class="card"><h2>Role-based Views</h2><p class="muted">Administrator · Receptionist · Physician · Medical Technologist · Pharmacist · Cashier</p><div class="notice">The demo hides modules and actions by role. Production authorization must also be enforced in the backend/database.</div></div></div><div class="section-head"><h2>Audit Log</h2></div><div class="table-wrap"><table class="responsive-table"><thead><tr><th>Timestamp</th><th>User / Role</th><th>Action</th></tr></thead><tbody>${db.audit.slice(0,100).map(a=>`<tr><td data-label="Timestamp">${new Date(a.ts).toLocaleString('en-PH')}</td><td data-label="Role">${esc(a.user)}</td><td data-label="Action">${esc(a.action)}</td></tr>`).join('')}</tbody></table></div>`;
 }
+window.saveReceiptConfig=function(){
+  if(activeRole!=='Administrator')return alert('Administrator access required.');
+  db.clinic={name:v('cfgClinicName')||'ACCU Laboratory and Diagnostic Center',address:v('cfgAddress'),contact:v('cfgContact'),tin:v('cfgTin'),receiptFooter:v('cfgFooter')||'Thank you for choosing ACCU.'};
+  save('Updated thermal receipt details');
+  alert('Receipt details saved.');
+};
 
 function patientSelect(id,selected=''){return `<div class="field"><label>Patient</label><select id="${id}">${db.patients.map(p=>`<option value="${p.id}" ${selected===p.id?'selected':''}>${esc(p.name)} (${p.id})</option>`).join('')}</select></div>`}
 function field(label,id,type='text',arg=''){
@@ -394,8 +472,8 @@ document.getElementById('quickSaleBtn').onclick=runQuickAction;
 document.getElementById('mobileQuickBtn').onclick=runQuickAction;
 document.getElementById('menuBtn').onclick=openDrawer;
 document.getElementById('drawerBackdrop').onclick=closeDrawer;
-document.getElementById('roleSelect').addEventListener('change',e=>{activeRole=e.target.value;localStorage.setItem(ROLE_KEY,activeRole);cart=[];saleDraft={patientId:'',payment:'Cash'};renderAll();updateRoleUI()});
-document.getElementById('resetDemo').onclick=()=>{if(confirm('Reset all demo data?')){localStorage.removeItem(STORAGE_KEY);db=load();cart=[];saleDraft={patientId:'',payment:'Cash'};renderAll();updateRoleUI();showView('dashboard')}};
+document.getElementById('roleSelect').addEventListener('change',e=>{activeRole=e.target.value;localStorage.setItem(ROLE_KEY,activeRole);cart=[];saleDraft={patientId:'',payment:'Cash',tendered:''};renderAll();updateRoleUI()});
+document.getElementById('resetDemo').onclick=()=>{if(confirm('Reset all demo data?')){localStorage.removeItem(STORAGE_KEY);db=load();cart=[];saleDraft={patientId:'',payment:'Cash',tendered:''};renderAll();updateRoleUI();showView('dashboard')}};
 
 renderAll();
 updateRoleUI();

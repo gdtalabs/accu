@@ -1,55 +1,64 @@
-# ACCU Integrated Clinic System — Responsive MVP
+# ACCU Integrated Clinic System — MVP v4
 
-A browser-based MVP for ACCU Laboratory and Diagnostic Center covering patient registration, consultation workflow, laboratory/diagnostic orders, pharmacy inventory, unified billing, receipts, reports, and role-based workspaces.
+Browser-based prototype for ACCU Laboratory and Diagnostic Center.
 
-## Run locally
+## Modules
+- Patient registry
+- Consultation queue and physician encounter workflow
+- Laboratory / diagnostic ordering and status workflow
+- Pharmacy inventory with batch, expiry, and low-stock monitoring
+- Unified POS / billing
+- Role-based workspaces for Administrator, Receptionist, Physician, Medical Technologist, Pharmacist, and Cashier
+- Reports and audit log
+- 80 mm thermal receipt workflow
 
-Open `index.html` directly, or serve the folder locally:
+## Thermal receipt update in v4
+The POS now supports:
+- Amount tendered for cash transactions
+- Automatic change calculation
+- Transaction / receipt number
+- Patient name or Walk-in
+- Payment method
+- Processing role (demo placeholder for the actual signed-in staff account)
+- Itemized services and medicines
+- ACCU logo
+- Editable clinic address, contact details, TIN / registration line, and receipt footer
+- Reprint button from the transaction ledger
+- `REPRINTED COPY` marking on reprinted receipts
+- 80 mm print-specific layout
+
+## Running the MVP
+You can open `index.html` directly in a modern browser, or serve the folder locally:
 
 ```bash
 python -m http.server 8000
 ```
 
-Then open `http://localhost:8000`.
+Then open:
 
-## Responsive design
+`http://localhost:8000`
 
-The interface is adaptive rather than having separate desktop/mobile versions:
+## Setting up an 80 mm receipt printer
+1. Connect the thermal printer to the cashier computer by USB, LAN, or another supported connection.
+2. Install the manufacturer's printer driver so the printer appears in Windows/macOS printer settings.
+3. In the printer driver, select an 80 mm / receipt-roll paper size when available.
+4. In ACCU POS, complete a transaction and select **Print 80mm Receipt**.
+5. In the browser print dialog, choose the thermal printer.
+6. Use 80 mm paper, no/minimum margins, 100% scale, and disable browser headers and footers.
 
-- Wide desktop: full sidebar + multi-column dashboards/POS
-- Laptop/narrow browser: fluid grids and one-column POS when needed
-- Tablet: slide-out navigation drawer
-- Phone: top header, bottom role-specific navigation, card-style tables and touch-friendly forms
+The browser version intentionally shows the system print dialog. It does **not** silently send commands directly to the printer.
 
-## ACCU color system
+For a future production build, direct ESC/POS printing, auto-cut, cash-drawer control, and silent printing can be added through a local print bridge (for example, QZ Tray) or a dedicated desktop POS client.
 
-The UI follows the supplied logo:
+## Receipt configuration
+Sign in as the **Administrator** demo role and open **Admin**. Under **Receipt Header**, enter ACCU's actual:
+- clinic name
+- address
+- contact information
+- TIN / registration line, if applicable
+- receipt footer
 
-- ACCU blue: primary navigation/actions
-- ACCU green: normal/validated/success states
-- ACCU red: warnings, urgent inventory/clinical accents
-- White and cool neutral backgrounds for readability
+These values are stored in this browser's localStorage and are printed on future receipts.
 
-## Role-based workspaces
-
-### Administrator
-Dashboard, Patients, Consultations, Laboratory, Pharmacy, POS/Billing, Reports, Admin/Audit. Full MVP actions.
-
-### Receptionist
-Dashboard, Patient Registry, Consultation Queue, Laboratory Requests. Can register patients and create queues/orders, but cannot edit clinical assessments, laboratory results, pharmacy, billing, reports or admin.
-
-### Physician
-Dashboard, Patient Lookup, Consultations, Laboratory. Can complete assessments and create diagnostic requests. Laboratory results are read-only.
-
-### Medical Technologist
-Dashboard and Laboratory only. Can advance specimen/order workflow and encode results. No consultations, pharmacy, billing or financial reports.
-
-### Pharmacist
-Dashboard, Pharmacy Inventory and medicine-only POS. Can add medicine batches and dispense medicines. No consultation/laboratory modules or financial reports.
-
-### Cashier
-Dashboard, Unified POS/Billing and today's Sales/Transactions. Cannot edit clinical records or inventory.
-
-## Important
-
-This is still a demonstration MVP. Data and the demo role are stored in the browser using `localStorage`. Real clinic deployment must move authentication, authorization, patient data, backups and audit enforcement to a secure backend/database.
+## Important production note
+This remains a demo/MVP. Patient and transaction data are currently stored in browser localStorage. Do not use this build as the production repository for real patient health information. A production version should move authentication, authorization, audit logs, patient data, billing data, backups, and printer configuration to an appropriately secured backend/database.
