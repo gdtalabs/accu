@@ -1,44 +1,55 @@
-# ACCU Clinic Management MVP — Responsive + Role-Based v2
+# ACCU Integrated Clinic System — Responsive MVP
 
-A browser-based prototype for ACCU Laboratory and Diagnostic Center covering patient registration, consultations, laboratory/diagnostic orders, pharmacy inventory, POS/billing, receipts, reports and audit logging.
+A browser-based MVP for ACCU Laboratory and Diagnostic Center covering patient registration, consultation workflow, laboratory/diagnostic orders, pharmacy inventory, unified billing, receipts, reports, and role-based workspaces.
 
-## What changed in v2
+## Run locally
 
-- Responsive phone layout with fixed mobile header and role-aware bottom navigation
-- Slide-out navigation drawer on phones
-- Desktop tables become readable mobile cards instead of overflowing horizontally
-- Mobile-friendly POS catalog, cart, forms and bottom-sheet modals
-- Distinct dashboards, visible modules and actions for each clinic role
-
-## Role views
-
-- **Administrator** — all modules, full dashboard, reports, inventory and audit log
-- **Receptionist** — patient registry, consultation queue and laboratory requests
-- **Physician** — patients, consultation encounters and laboratory requests
-- **Medical Technologist** — patients and lab queue with status/result controls
-- **Pharmacist** — pharmacy inventory and medicine-only POS
-- **Cashier** — patient lookup, unified POS/billing and today's sales ledger
-
-The role switcher is for MVP/demo purposes. Real production permissions must be enforced server-side.
-
-## Run
-
-### Simplest
-Open `index.html` directly in a modern browser.
-
-### Recommended local server
-From this folder:
+Open `index.html` directly, or serve the folder locally:
 
 ```bash
 python -m http.server 8000
 ```
 
-Then open:
+Then open `http://localhost:8000`.
 
-`http://localhost:8000`
+## Responsive design
 
-## Storage
+The interface is adaptive rather than having separate desktop/mobile versions:
 
-This MVP uses browser `localStorage`. Do **not** use this version for real patient records or production clinic operations.
+- Wide desktop: full sidebar + multi-column dashboards/POS
+- Laptop/narrow browser: fluid grids and one-column POS when needed
+- Tablet: slide-out navigation drawer
+- Phone: top header, bottom role-specific navigation, card-style tables and touch-friendly forms
 
-Before real deployment, migrate to a secure backend such as Supabase/PostgreSQL and add authenticated users, database-level role permissions, encryption, backups, proper audit logging and privacy/security controls.
+## ACCU color system
+
+The UI follows the supplied logo:
+
+- ACCU blue: primary navigation/actions
+- ACCU green: normal/validated/success states
+- ACCU red: warnings, urgent inventory/clinical accents
+- White and cool neutral backgrounds for readability
+
+## Role-based workspaces
+
+### Administrator
+Dashboard, Patients, Consultations, Laboratory, Pharmacy, POS/Billing, Reports, Admin/Audit. Full MVP actions.
+
+### Receptionist
+Dashboard, Patient Registry, Consultation Queue, Laboratory Requests. Can register patients and create queues/orders, but cannot edit clinical assessments, laboratory results, pharmacy, billing, reports or admin.
+
+### Physician
+Dashboard, Patient Lookup, Consultations, Laboratory. Can complete assessments and create diagnostic requests. Laboratory results are read-only.
+
+### Medical Technologist
+Dashboard and Laboratory only. Can advance specimen/order workflow and encode results. No consultations, pharmacy, billing or financial reports.
+
+### Pharmacist
+Dashboard, Pharmacy Inventory and medicine-only POS. Can add medicine batches and dispense medicines. No consultation/laboratory modules or financial reports.
+
+### Cashier
+Dashboard, Unified POS/Billing and today's Sales/Transactions. Cannot edit clinical records or inventory.
+
+## Important
+
+This is still a demonstration MVP. Data and the demo role are stored in the browser using `localStorage`. Real clinic deployment must move authentication, authorization, patient data, backups and audit enforcement to a secure backend/database.

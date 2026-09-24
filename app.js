@@ -42,42 +42,42 @@ const ROLE_CONFIG = {
     views:['dashboard','patients','consultations','laboratory','pharmacy','pos','reports','settings'],
     actions:['addPatient','createConsult','completeConsult','createLab','labStatus','labResult','addMedicine','checkout','export'],
     bottom:['dashboard','patients','laboratory','pos','reports'],
-    context:'Full clinic overview, operations, billing, inventory, reports and audit access.',
+    context:'Full clinic administration, clinical operations, billing, inventory, reports and audit access.',
     quick:{type:'view',target:'pos',label:'+ New Transaction'}
   },
   'Receptionist': {
     views:['dashboard','patients','consultations','laboratory'],
     actions:['addPatient','createConsult','createLab'],
     bottom:['dashboard','patients','consultations','laboratory'],
-    context:'Front desk workspace for patient registration, consultation queue and lab requests.',
+    context:'Front desk access for registration, consultation queueing and diagnostic requests. No clinical results, inventory or billing access.',
     quick:{type:'action',target:'patient',label:'+ Add Patient'}
   },
   'Physician': {
     views:['dashboard','patients','consultations','laboratory'],
     actions:['createConsult','completeConsult','createLab'],
     bottom:['dashboard','consultations','patients','laboratory'],
-    context:'Clinical workspace for encounters, patient lookup and diagnostic requests.',
+    context:'Clinical access for patient lookup, encounters, assessments and diagnostic requests. Laboratory results are read-only.',
     quick:{type:'action',target:'consult',label:'+ New Consultation'}
   },
   'Medical Technologist': {
-    views:['dashboard','patients','laboratory'],
+    views:['dashboard','laboratory'],
     actions:['labStatus','labResult'],
-    bottom:['dashboard','laboratory','patients'],
-    context:'Laboratory work queue for collection, processing, validation and result release.',
+    bottom:['dashboard','laboratory'],
+    context:'Laboratory workbench for specimen workflow, result encoding, validation and release. No consultation, pharmacy or billing access.',
     quick:{type:'view',target:'laboratory',label:'Open Lab Queue'}
   },
   'Pharmacist': {
-    views:['dashboard','patients','pharmacy','pos'],
+    views:['dashboard','pharmacy','pos'],
     actions:['addMedicine','checkout'],
-    bottom:['dashboard','pharmacy','pos','patients'],
-    context:'Pharmacy workspace for stock, expiry monitoring and medicine dispensing.',
+    bottom:['dashboard','pharmacy','pos'],
+    context:'Pharmacy access for inventory, batch/expiry monitoring and medicine-only dispensing.',
     quick:{type:'view',target:'pos',label:'+ Pharmacy Sale'}
   },
   'Cashier': {
-    views:['dashboard','patients','pos','reports'],
+    views:['dashboard','pos','reports'],
     actions:['checkout'],
-    bottom:['dashboard','pos','patients','reports'],
-    context:'Billing workspace for patient checkout, payments and today’s transaction ledger.',
+    bottom:['dashboard','pos','reports'],
+    context:'Cashier access for unified billing, payment collection and today’s transaction ledger. No clinical editing or inventory management.',
     quick:{type:'view',target:'pos',label:'+ New Transaction'}
   }
 };
@@ -138,6 +138,7 @@ window.showView = function(id){
 
 function updateRoleUI(){
   const cfg=roleCfg();
+  document.body.dataset.role=activeRole.replace(/\s+/g,'-').toLowerCase();
   document.getElementById('roleSelect').value=activeRole;
   document.getElementById('desktopRoleLabel').textContent=activeRole;
   document.getElementById('mobileRoleLabel').textContent=activeRole;
@@ -244,7 +245,14 @@ function renderConsultations(){
   document.getElementById('consultations').innerHTML=`<div class="section-head"><h2>Consultation Queue & Encounters</h2>${add}</div>${consultationsTable(db.consultations)}`;
 }
 function consultationsTable(rows){
-  return `<div class="table-wrap"><table class="responsive-table"><thead><tr><th>Encounter</th><th>Date</th><th>Patient</th><th>Doctor</th><th>Chief Complaint</th><th>Assessment</th><th>Fee</th><th>Status</th>${can('completeConsult')?'<th>Action</th>':''}</tr></thead><tbody>${rows.map(c=>`<tr><td data-label="Encounter">${c.id}</td><td data-label="Date">${c.date}</td><td data-label="Patient"><strong>${esc(patientName(c.patientId))}</strong></td><td data-label="Doctor">${esc(c.doctor||'—')}</td><td data-label="Chief Complaint">${esc(c.chief||'—')}</td><td data-label="Assessment">${esc(c.assessment||'—')}</td><td data-label="Fee">${money(c.fee)}</td><td data-label="Status"><span class="badge ${statusBadgeClass(c.status)}">${esc(c.status)}</span></td>${can('completeConsult')?`<td data-label="Action"><button class="small-btn primary-mini" onclick="openConsultModal('${c.id}')">${c.status==='Completed'?'Edit':'Open Encounter'}</button></td>`:''}</tr>`).join('')||`<tr><td colspan="${can('completeConsult')?9:8}" class="empty">No consultation encounters.</td></tr>`}</tbody></table></div>`;
+  const frontDesk=activeRole==='Receptionist';
+  const clinical=!frontDesk;
+  const action=can('completeConsult');
+  const head=frontDesk
+    ? '<th>Encounter</th><th>Date</th><th>Patient</th><th>Doctor</th><th>Chief Complaint</th><th>Status</th>'
+    : '<th>Encounter</th><th>Date</th><th>Patient</th><th>Doctor</th><th>Chief Complaint</th><th>Assessment</th><th>Fee</th><th>Status</th>';
+  const colspan=(frontDesk?6:8)+(action?1:0);
+  return `<div class="table-wrap"><table class="responsive-table"><thead><tr>${head}${action?'<th>Action</th>':''}</tr></thead><tbody>${rows.map(c=>`<tr><td data-label="Encounter">${c.id}</td><td data-label="Date">${c.date}</td><td data-label="Patient"><strong>${esc(patientName(c.patientId))}</strong></td><td data-label="Doctor">${esc(c.doctor||'—')}</td><td data-label="Chief Complaint">${esc(c.chief||'—')}</td>${clinical?`<td data-label="Assessment">${esc(c.assessment||'—')}</td><td data-label="Fee">${money(c.fee)}</td>`:''}<td data-label="Status"><span class="badge ${statusBadgeClass(c.status)}">${esc(c.status)}</span></td>${action?`<td data-label="Action"><button class="small-btn primary-mini" onclick="openConsultModal('${c.id}')">${c.status==='Completed'?'Edit':'Open Encounter'}</button></td>`:''}</tr>`).join('')||`<tr><td colspan="${colspan}" class="empty">No consultation encounters.</td></tr>`}</tbody></table></div>`;
 }
 window.openConsultModal=function(id=''){
   if(id && !guard('completeConsult')) return;
@@ -265,8 +273,20 @@ function renderLab(){
   document.getElementById('laboratory').innerHTML=`<div class="section-head"><h2>Laboratory & Diagnostic Orders</h2>${add}</div>${labTable(db.labOrders)}`;
 }
 function labTable(rows){
+  const admin=activeRole==='Administrator';
+  const receptionist=activeRole==='Receptionist';
+  const physician=activeRole==='Physician';
+  const medtech=activeRole==='Medical Technologist';
   const hasActions=can('labStatus')||can('labResult');
-  return `<div class="table-wrap"><table class="responsive-table"><thead><tr><th>Order</th><th>Date</th><th>Patient</th><th>Tests</th><th>Amount</th><th>Status</th><th>Result</th>${hasActions?'<th>Actions</th>':''}</tr></thead><tbody>${rows.map(o=>`<tr><td data-label="Order">${o.id}</td><td data-label="Date">${o.date}</td><td data-label="Patient"><strong>${esc(patientName(o.patientId))}</strong></td><td data-label="Tests">${o.tests.map(t=>`<span class="badge blue">${esc(t)}</span>`).join(' ')}</td><td data-label="Amount">${money(o.amount)}</td><td data-label="Status"><span class="badge ${statusBadgeClass(o.status)}">${esc(o.status)}</span></td><td data-label="Result">${o.resultNote?esc(o.resultNote):'<span class="muted">Not encoded</span>'}</td>${hasActions?`<td data-label="Actions"><div class="inline-actions">${can('labStatus')?labStatusControl(o):''}${can('labResult')?`<button class="small-btn" onclick="openLabResultModal('${o.id}')">Encode Result</button>`:''}</div></td>`:''}</tr>`).join('')||`<tr><td colspan="${hasActions?8:7}" class="empty">No laboratory orders.</td></tr>`}</tbody></table></div>`;
+  const showAmount=admin;
+  const showResult=admin||physician||medtech;
+  let head='<th>Order</th><th>Date</th><th>Patient</th><th>Tests</th>';
+  if(showAmount) head+='<th>Amount</th>';
+  head+='<th>Status</th>';
+  if(showResult) head+='<th>Result</th>';
+  if(hasActions) head+='<th>Actions</th>';
+  const colspan=4+(showAmount?1:0)+1+(showResult?1:0)+(hasActions?1:0);
+  return `<div class="table-wrap"><table class="responsive-table"><thead><tr>${head}</tr></thead><tbody>${rows.map(o=>`<tr><td data-label="Order">${o.id}</td><td data-label="Date">${o.date}</td><td data-label="Patient"><strong>${esc(patientName(o.patientId))}</strong></td><td data-label="Tests">${o.tests.map(t=>`<span class="badge blue">${esc(t)}</span>`).join(' ')}</td>${showAmount?`<td data-label="Amount">${money(o.amount)}</td>`:''}<td data-label="Status"><span class="badge ${statusBadgeClass(o.status)}">${esc(o.status)}</span></td>${showResult?`<td data-label="Result">${o.resultNote?esc(o.resultNote):'<span class="muted">Not encoded</span>'}</td>`:''}${hasActions?`<td data-label="Actions"><div class="inline-actions">${can('labStatus')?labStatusControl(o):''}${can('labResult')?`<button class="small-btn" onclick="openLabResultModal('${o.id}')">Encode Result</button>`:''}</div></td>`:''}</tr>`).join('')||`<tr><td colspan="${colspan}" class="empty">No laboratory orders.</td></tr>`}</tbody></table></div>`;
 }
 function labStatusControl(o){
   const statuses=['For Collection','Collected','Processing','For Validation','Released'];
@@ -312,9 +332,9 @@ function renderPOS(){
 window.addService=function(id){if(!can('checkout'))return;captureSaleDraft();const s=db.services.find(x=>x.id===id);addCartLine({kind:s.type,refId:s.id,name:s.name,qty:1,price:s.price});renderPOS()};
 window.addMedicine=function(id){if(!can('checkout'))return;captureSaleDraft();const m=db.inventory.find(x=>x.id===id);addCartLine({kind:'Pharmacy',refId:m.id,name:`${m.generic} ${m.strength}`,qty:1,price:m.sell});renderPOS()};
 function addCartLine(line){const existing=cart.find(x=>x.kind===line.kind&&x.refId===line.refId);if(existing)existing.qty+=1;else cart.push(line)}
-window.updateCartQty=function(idx,value){captureSaleDraft();cart[idx].qty=Math.max(1,+value||1);renderPOS()};
-window.removeCartItem=function(idx){captureSaleDraft();cart.splice(idx,1);renderPOS()};
-window.clearCart=function(){captureSaleDraft();cart=[];renderPOS()};
+window.updateCartQty=function(idx,value){if(!can('checkout'))return;captureSaleDraft();cart[idx].qty=Math.max(1,+value||1);renderPOS()};
+window.removeCartItem=function(idx){if(!can('checkout'))return;captureSaleDraft();cart.splice(idx,1);renderPOS()};
+window.clearCart=function(){if(!can('checkout'))return;captureSaleDraft();cart=[];renderPOS()};
 function saleSummary(){const sub=cart.reduce((a,b)=>a+b.price*b.qty,0);return `<div class="summary-box" style="margin-top:14px"><div class="summary-row"><span>Subtotal</span><strong>${money(sub)}</strong></div><div class="summary-row"><span>Discount</span><strong>${money(0)}</strong></div><div class="summary-row total"><span>Total</span><span>${money(sub)}</span></div></div>`}
 window.checkout=function(){
   if(!guard('checkout')||!cart.length)return;captureSaleDraft();
@@ -358,7 +378,14 @@ function modal(title,body,onSave,saveText='Save',extra=''){
 }
 window.closeModal=()=>document.getElementById('modalRoot').innerHTML='';
 
-function renderAll(){renderDashboard();renderPatients();renderConsultations();renderLab();renderPharmacy();renderPOS();renderReports();renderSettings()}
+function renderAll(){
+  const renderers={dashboard:renderDashboard,patients:renderPatients,consultations:renderConsultations,laboratory:renderLab,pharmacy:renderPharmacy,pos:renderPOS,reports:renderReports,settings:renderSettings};
+  Object.entries(renderers).forEach(([view,render])=>{
+    const el=document.getElementById(view);
+    if(canView(view)) render();
+    else if(el) el.innerHTML='';
+  });
+}
 
 // Static UI wiring
 document.getElementById('todayLabel').textContent=new Date().toLocaleDateString('en-PH',{weekday:'short',year:'numeric',month:'short',day:'numeric'});
