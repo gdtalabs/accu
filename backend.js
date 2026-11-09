@@ -22,11 +22,23 @@
     return getProfile();
   }
   async function signOut(){if(client)await client.auth.signOut();status.user=null;status.profile=null}
+  async function fetchMedicineRows(){
+    const role=status.profile?.role||'';
+    if(role==='Pharmacy Assistant'){
+      const {data,error}=await client.rpc('get_pharmacy_inventory_for_current_user');
+      if(error)throw error;
+      return data||[];
+    }
+    const {data,error}=await client.from('medicines').select('*').order('created_at',{ascending:true});
+    if(error)throw error;
+    return data||[];
+  }
   async function loadWorkspace(){
     if(!client)return null;
-    const tables=['patients','practitioners','encounters','lab_orders','radiology_orders','services','medicines','lab_supplies','lab_supply_movements','transactions','pharmacy_returns','online_orders'];
+    const tables=['patients','practitioners','encounters','lab_orders','radiology_orders','services','lab_supplies','lab_supply_movements','transactions','pharmacy_returns','online_orders'];
     const out={};
     for(const t of tables){const {data,error}=await client.from(t).select('*').order('created_at',{ascending:true});if(error){out[t]=[];continue}out[t]=data||[]}
+    try{out.medicines=await fetchMedicineRows()}catch(e){console.warn('Medicine inventory load skipped',e.message);out.medicines=[]}
     const {data:settings,error:se}=await client.from('app_settings').select('*');if(se)throw se;
     const get=(k,fallback)=>settings?.find(x=>x.key===k)?.value||fallback;
     return {
@@ -66,12 +78,12 @@
   }
   async function refreshPharmacyState(){
     if(!client)throw new Error('Supabase is not configured.');
-    const [m,o]=await Promise.all([
-      client.from('medicines').select('*').order('created_at',{ascending:true}),
+    const [medicineRows,o]=await Promise.all([
+      fetchMedicineRows(),
       client.from('online_orders').select('*').order('created_at',{ascending:true})
     ]);
-    if(m.error)throw m.error;if(o.error)throw o.error;
-    return {inventory:(m.data||[]).map(x=>x.data),onlineOrders:(o.data||[]).map(x=>x.data)};
+    if(o.error)throw o.error;
+    return {inventory:(medicineRows||[]).map(x=>x.data),onlineOrders:(o.data||[]).map(x=>x.data)};
   }
   async function syncWorkspace(db,action,role){
     if(!client)return;
