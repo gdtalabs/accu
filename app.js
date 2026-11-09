@@ -127,6 +127,13 @@ const ROLE_CONFIG = {
     context:'Pharmacy access for inventory, batch/expiry monitoring, medicine-only dispensing and controlled returns.',
     quick:{type:'view',target:'pos',label:'+ Pharmacy Sale'}
   },
+  'Pharmacy Assistant': {
+    views:['dashboard','pharmacy','pos'],
+    actions:['pharmacyReturn','checkout'],
+    bottom:['dashboard','pharmacy','pos'],
+    context:'Pharmacy support access for medicine lookup, dispensing, sales and authorized returns.',
+    quick:{type:'view',target:'pos',label:'+ Pharmacy Sale'}
+  },
   'Cashier': {
     views:['dashboard','pos','reports'],
     actions:['checkout'],
