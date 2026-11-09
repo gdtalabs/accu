@@ -24,13 +24,13 @@
   async function signOut(){if(client)await client.auth.signOut();status.user=null;status.profile=null}
   async function loadWorkspace(){
     if(!client)return null;
-    const tables=['patients','practitioners','encounters','lab_orders','radiology_orders','services','medicines','lab_supplies','lab_supply_movements','transactions','pharmacy_returns'];
+    const tables=['patients','practitioners','encounters','lab_orders','radiology_orders','services','medicines','lab_supplies','lab_supply_movements','transactions','pharmacy_returns','online_orders'];
     const out={};
     for(const t of tables){const {data,error}=await client.from(t).select('*').order('created_at',{ascending:true});if(error){out[t]=[];continue}out[t]=data||[]}
     const {data:settings,error:se}=await client.from('app_settings').select('*');if(se)throw se;
     const get=(k,fallback)=>settings?.find(x=>x.key===k)?.value||fallback;
     return {
-      patients:out.patients.map(x=>x.data), practitioners:out.practitioners.map(x=>x.data), consultations:out.encounters.map(x=>x.data), labOrders:out.lab_orders.map(x=>x.data), radiologyOrders:out.radiology_orders.map(x=>x.data), services:out.services.map(x=>x.data), inventory:out.medicines.map(x=>x.data), labSupplies:out.lab_supplies.map(x=>x.data), labSupplyMovements:out.lab_supply_movements.map(x=>x.data), transactions:out.transactions.map(x=>x.data), pharmacyReturns:out.pharmacy_returns.map(x=>x.data), clinic:get('clinic',{}), pharmacyEntity:get('pharmacyEntity',{}), meta:get('meta',{}), audit:[]
+      patients:out.patients.map(x=>x.data), practitioners:out.practitioners.map(x=>x.data), consultations:out.encounters.map(x=>x.data), labOrders:out.lab_orders.map(x=>x.data), radiologyOrders:out.radiology_orders.map(x=>x.data), services:out.services.map(x=>x.data), inventory:out.medicines.map(x=>x.data), labSupplies:out.lab_supplies.map(x=>x.data), labSupplyMovements:out.lab_supply_movements.map(x=>x.data), transactions:out.transactions.map(x=>x.data), pharmacyReturns:out.pharmacy_returns.map(x=>x.data), onlineOrders:out.online_orders.map(x=>x.data), clinic:get('clinic',{}), pharmacyEntity:get('pharmacyEntity',{}), meta:get('meta',{}), audit:[]
     };
   }
   async function upsertRows(table,rows,options={}){
@@ -38,6 +38,40 @@
     const {error}=await client.from(table).upsert(rows,{onConflict:'local_id',ignoreDuplicates:!!options.ignoreDuplicates});
     if(error){console.warn('Supabase sync skipped',table,error.message);return false}
     return true;
+  }
+  async function syncStoreCatalog(inventory){
+    if(!client)return;
+    const rows=(inventory||[]).map(p=>({
+      inventory_local_id:p.id,
+      name:(p.productType||'Medicine')==='Medicine'?`${p.generic||p.productName||''}${p.strength?` ${p.strength}`:''}`.trim():(p.productName||p.brand||p.generic||p.id),
+      generic_name:p.generic||'', brand_name:p.brand||'', category:p.category||'', product_type:p.productType||'Medicine',
+      price:Number(p.sell||0), image_url:p.imageUrl||'', description:p.onlineDescription||'', prescription_required:!!p.prescriptionRequired,
+      online_enabled:!!p.onlineEnabled, available:Number(p.qty||0)>0&&(!p.expiry||new Date(`${p.expiry}T23:59:59`)>=new Date()), updated_at:new Date().toISOString()
+    }));
+    if(!rows.length)return;
+    const {error}=await client.from('store_products').upsert(rows,{onConflict:'inventory_local_id'});
+    if(error)console.warn('Store catalog sync skipped',error.message);
+  }
+  async function syncStockQuantities(inventory){
+    for(const p of inventory||[]){
+      const {error}=await client.rpc('update_pharmacy_stock_qty',{p_local_id:p.id,p_qty:Number(p.qty||0)});
+      if(error)console.warn('Stock quantity sync skipped',p.id,error.message);
+    }
+  }
+  async function updateOnlineOrderState(orderId,statusValue,rxApproved=null){
+    if(!client)throw new Error('Supabase is not configured.');
+    const {data,error}=await client.rpc('update_online_order_state',{p_local_id:orderId,p_status:statusValue,p_rx_approved:rxApproved});
+    if(error)throw error;
+    return data||null;
+  }
+  async function refreshPharmacyState(){
+    if(!client)throw new Error('Supabase is not configured.');
+    const [m,o]=await Promise.all([
+      client.from('medicines').select('*').order('created_at',{ascending:true}),
+      client.from('online_orders').select('*').order('created_at',{ascending:true})
+    ]);
+    if(m.error)throw m.error;if(o.error)throw o.error;
+    return {inventory:(m.data||[]).map(x=>x.data),onlineOrders:(o.data||[]).map(x=>x.data)};
   }
   async function syncWorkspace(db,action,role){
     if(!client)return;
@@ -50,7 +84,7 @@
       await full('patients',db.patients); await full('practitioners',db.practitioners); await full('encounters',db.consultations);
       await full('lab_orders',db.labOrders); await full('radiology_orders',db.radiologyOrders); await full('services',db.services);
       await full('medicines',db.inventory); await full('lab_supplies',db.labSupplies); await full('lab_supply_movements',db.labSupplyMovements);
-      await full('transactions',db.transactions); await full('pharmacy_returns',db.pharmacyReturns);
+      await full('transactions',db.transactions); await full('pharmacy_returns',db.pharmacyReturns); await syncStoreCatalog(db.inventory);
       for(const [key,value] of Object.entries({clinic:db.clinic,pharmacyEntity:db.pharmacyEntity,meta:db.meta})){
         const {error}=await client.from('app_settings').upsert({key,value},{onConflict:'key'}); if(error)console.warn('Settings sync skipped',key,error.message);
       }
@@ -63,7 +97,9 @@
     }else if(appRole==='Radiologic Technologist'||appRole==='Radiologist'){
       await full('radiology_orders',db.radiologyOrders);
     }else if(appRole==='Pharmacist'){
-      await full('medicines',db.inventory); await full('transactions',db.transactions); await insertOnly('pharmacy_returns',db.pharmacyReturns);
+      await full('medicines',db.inventory); await insertOnly('transactions',db.transactions); await insertOnly('pharmacy_returns',db.pharmacyReturns); await syncStoreCatalog(db.inventory);
+    }else if(appRole==='Pharmacy Assistant'){
+      await syncStockQuantities(db.inventory); await insertOnly('transactions',db.transactions); await insertOnly('pharmacy_returns',db.pharmacyReturns);
     }else if(appRole==='Cashier'){
       await full('transactions',db.transactions);
     }
@@ -117,5 +153,5 @@
     }
     return true;
   }
-  window.ACCUBackend={configured,client,status,getProfile,signIn,signOut,loadWorkspace,syncWorkspace,listProfiles,createStaffUser,resetStaffPassword,updateStaffProfile,changeOwnPassword};
+  window.ACCUBackend={configured,client,status,getProfile,signIn,signOut,loadWorkspace,syncWorkspace,listProfiles,createStaffUser,resetStaffPassword,updateStaffProfile,changeOwnPassword,updateOnlineOrderState,refreshPharmacyState};
 })();

@@ -427,3 +427,4 @@ button.small{min-height:32px;padding:6px 10px;font-size:12px}
   .auth-card img{width:180px;margin-bottom:16px}
   .auth-card h2{font-size:23px}
 }
+.store-login-link{display:block;margin:12px auto 0;text-align:center;color:var(--accu-blue);font-size:12px;font-weight:800;text-decoration:none}.store-login-link:hover{text-decoration:underline}.button-link{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;min-height:38px;padding:9px 12px;border-radius:10px;font-weight:700}

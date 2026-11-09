@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b4a82" />
+  <title>ACCU Pharmacy Online Store</title>
+  <link rel="stylesheet" href="store.css" />
+</head>
+<body>
+  <header class="store-header">
+    <a class="store-brand" href="store.html">
+      <img src="accu-logo.jpeg" alt="ACCU" />
+      <div><strong>ACCU Pharmacy</strong><span>Online Store</span></div>
+    </a>
+    <div class="header-actions">
+      <a class="staff-link" href="index.html">Staff Login</a>
+      <button id="cartButton" class="cart-button">Cart <span id="cartCount">0</span></button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Pharmacy Retail & Health Essentials</p>
+        <h1>Order pharmacy products online.</h1>
+        <p>Browse medicines, personal care, beauty, wellness, medical supplies and general pharmacy merchandise. Availability is confirmed by the pharmacy before fulfillment.</p>
+      </div>
+      <div class="hero-note"><strong>Prescription items</strong><span>Orders containing prescription-required medicines are held for pharmacist review before preparation or release.</span></div>
+    </section>
+
+    <section class="controls">
+      <input id="storeSearch" type="search" placeholder="Search products, generic name, brand, category…" />
+      <select id="categoryFilter"><option value="">All categories</option></select>
+    </section>
+
+    <div id="storeNotice" class="notice" hidden></div>
+    <section id="productGrid" class="product-grid" aria-live="polite"></section>
+  </main>
+
+  <aside id="cartDrawer" class="cart-drawer" aria-hidden="true">
+    <div class="drawer-head"><div><strong>Your Cart</strong><span id="cartSubtitle">0 items</span></div><button id="closeCart" aria-label="Close cart">×</button></div>
+    <div id="cartLines" class="cart-lines"></div>
+    <div class="cart-summary"><span>Subtotal</span><strong id="cartSubtotal">₱0.00</strong></div>
+    <button id="checkoutButton" class="primary wide">Proceed to Checkout</button>
+  </aside>
+  <div id="drawerBackdrop" class="backdrop" hidden></div>
+
+  <div id="checkoutModal" class="modal-backdrop" hidden>
+    <div class="checkout-card">
+      <div class="drawer-head"><div><strong>Checkout</strong><span>Submit your order request to ACCU Pharmacy</span></div><button id="closeCheckout" aria-label="Close checkout">×</button></div>
+      <div id="rxCheckoutNotice" class="rx-checkout" hidden><strong>Prescription review required</strong><span>Your order contains a prescription-required medicine. The pharmacy must validate the prescription before fulfillment.</span></div>
+      <div class="form-grid">
+        <label>Full name<input id="customerName" autocomplete="name" /></label>
+        <label>Mobile number<input id="customerMobile" inputmode="tel" autocomplete="tel" /></label>
+        <label>Email (optional)<input id="customerEmail" type="email" autocomplete="email" /></label>
+        <label>Fulfillment<select id="fulfillment"><option>Pickup</option><option>Delivery</option></select></label>
+        <label class="full" id="addressField" hidden>Delivery address<textarea id="customerAddress" autocomplete="street-address"></textarea></label>
+        <label>Payment method<select id="paymentMethod"><option>Cash on Pickup</option><option>Cash on Delivery</option><option>GCash - arrange with pharmacy</option></select></label>
+        <label class="full">Order notes (optional)<textarea id="orderNotes" placeholder="Special instructions, preferred pickup time, etc."></textarea></label>
+        <label class="full" id="prescriptionField" hidden>Prescription note / reference<textarea id="prescriptionNote" placeholder="Optional note. The pharmacy will contact you for the valid prescription or verification required before dispensing."></textarea></label>
+        <label class="honeypot" aria-hidden="true">Website<input id="website" tabindex="-1" autocomplete="off" /></label>
+      </div>
+      <div class="checkout-total"><span>Order total</span><strong id="checkoutTotal">₱0.00</strong></div>
+      <p class="fineprint">Submitting an order does not automatically confirm dispensing or delivery. The pharmacy may contact you to verify availability, prescription requirements, payment and fulfillment details.</p>
+      <button id="placeOrderButton" class="primary wide">Place Order</button>
+      <p id="checkoutError" class="error"></p>
+    </div>
+  </div>
+
+  <div id="successModal" class="modal-backdrop" hidden>
+    <div class="success-card">
+      <div class="success-icon">✓</div>
+      <h2>Order received</h2>
+      <p id="successMessage"></p>
+      <div class="order-ref"><span>Order reference</span><strong id="successOrderNo"></strong></div>
+      <button id="successClose" class="primary wide">Continue Shopping</button>
+    </div>
+  </div>
+
+  <footer>ACCU Pharmacy Online Store · Product availability and fulfillment are subject to pharmacy confirmation.</footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="store.js"></script>
+</body>
+</html>
