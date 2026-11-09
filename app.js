@@ -76,21 +76,25 @@ const seed = {
     machineSerial:'',
     receiptFooter:'Thank you.'
   },
+  practitioners: [
+    {id:'PRAC-001',uuid:'11111111-1111-4111-8111-111111111111',name:'Dr. A. Cruz',role:'Physician',licenseNo:'',codeSystem:'',code:''}
+  ],
+  meta:{schemaVersion:9,interopProfile:'HL7 FHIR R4 / PH Core draft-aligned',lastMigration:''},
   audit: [{ts:new Date().toISOString(),user:'Administrator',action:'Demo database initialized'}]
 };
 
 const TITLES = {
   dashboard:'Dashboard', patients:'Patient Registry', consultations:'Consultations', laboratory:'Laboratory',
-  pharmacy:'Pharmacy Inventory', pos:'POS / Billing', reports:'Reports', settings:'Admin & Audit Log'
+  pharmacy:'Pharmacy Inventory', pos:'POS / Billing', reports:'Reports', interop:'Interoperability', settings:'Admin & Audit Log'
 };
 
-const ICONS = {dashboard:'⌂',patients:'👤',consultations:'🩺',laboratory:'🧪',pharmacy:'💊',pos:'▣',reports:'▤',settings:'⚙'};
-const SHORT_LABELS = {dashboard:'Home',patients:'Patients',consultations:'Consult',laboratory:'Lab',pharmacy:'Pharmacy',pos:'POS',reports:'Sales',settings:'Admin'};
+const ICONS = {dashboard:'⌂',patients:'👤',consultations:'🩺',laboratory:'🧪',pharmacy:'💊',pos:'▣',reports:'▤',interop:'⇄',settings:'⚙'};
+const SHORT_LABELS = {dashboard:'Home',patients:'Patients',consultations:'Consult',laboratory:'Lab',pharmacy:'Pharmacy',pos:'POS',reports:'Sales',interop:'Interop',settings:'Admin'};
 
 const ROLE_CONFIG = {
   'Administrator': {
-    views:['dashboard','patients','consultations','laboratory','pharmacy','pos','reports','settings'],
-    actions:['addPatient','createConsult','completeConsult','createLab','labStatus','labResult','addMedicine','addLabSupply','useLabSupply','checkout','export'],
+    views:['dashboard','patients','consultations','laboratory','pharmacy','pos','reports','interop','settings'],
+    actions:['addPatient','createConsult','completeConsult','createLab','labStatus','labResult','addMedicine','addLabSupply','useLabSupply','checkout','export','interopConfig'],
     bottom:['dashboard','patients','laboratory','pos','reports'],
     context:'Full clinic administration, clinical operations, billing, inventory, reports and audit access.',
     quick:{type:'view',target:'pos',label:'+ New Transaction'}
@@ -103,7 +107,7 @@ const ROLE_CONFIG = {
     quick:{type:'action',target:'patient',label:'+ Add Patient'}
   },
   'Physician': {
-    views:['dashboard','patients','consultations','laboratory'],
+    views:['dashboard','patients','consultations','laboratory','interop'],
     actions:['createConsult','completeConsult','createLab'],
     bottom:['dashboard','consultations','patients','laboratory'],
     context:'Clinical access for patient lookup, encounters, assessments and diagnostic requests. Laboratory results are read-only.',
@@ -132,6 +136,26 @@ const ROLE_CONFIG = {
   }
 };
 
+function newUuid(){
+  if(globalThis.crypto?.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0,v=c==='x'?r:(r&3|8);return v.toString(16)});
+}
+function ensureInteropModel(parsed){
+  let changed=false;
+  parsed.meta={...structuredClone(seed.meta),...(parsed.meta||{}),schemaVersion:8};
+  parsed.practitioners ||= structuredClone(seed.practitioners);
+  const ensure=(obj)=>{if(obj&&!obj.uuid){obj.uuid=newUuid();changed=true}return obj};
+  (parsed.patients||[]).forEach(p=>{ensure(p);p.identifiers ||= [{system:'urn:accu:patient-id',value:p.id}];});
+  (parsed.consultations||[]).forEach(c=>{ensure(c);c.diagnosisCodeSystem ||= 'http://hl7.org/fhir/sid/icd-10';c.diagnosisCode ||= '';if(!c.practitionerId&&c.doctor){let pr=parsed.practitioners.find(x=>x.name===c.doctor);if(!pr){pr={id:`PRAC-${String(parsed.practitioners.length+1).padStart(3,'0')}`,uuid:newUuid(),name:c.doctor,role:'Physician',licenseNo:'',codeSystem:'',code:''};parsed.practitioners.push(pr);changed=true}c.practitionerId=pr.id;}});
+  (parsed.labOrders||[]).forEach(o=>{ensure(o);o.resultComponents ||= [];o.serviceIds ||= (o.tests||[]).map(t=>(parsed.services||[]).find(s=>s.name===t)?.id).filter(Boolean);});
+  (parsed.services||[]).forEach(x=>{ensure(x);x.localCode ||= x.id;x.codeSystem ||= (x.type==='Laboratory'?'http://loinc.org':'');x.standardCode ||= '';});
+  (parsed.inventory||[]).forEach(x=>{ensure(x);x.localCode ||= x.id;x.standardCodeSystem ||= '';x.standardCode ||= '';});
+  (parsed.labSupplies||[]).forEach(ensure);
+  if(!parsed.clinic.uuid){parsed.clinic.uuid=newUuid();changed=true} if(!parsed.pharmacyEntity.uuid){parsed.pharmacyEntity.uuid=newUuid();changed=true}
+  if(changed) parsed.meta.lastMigration=new Date().toISOString();
+  return changed;
+}
+
 let db = load();
 let cart = [];
 let saleDraft = {entity:'clinic',patientId:'',payment:'Cash',tendered:'',buyerName:'',buyerTin:'',buyerAddress:'',discountType:'None',discountId:'',discountPercent:'0'};
@@ -141,10 +165,11 @@ let activeView = 'dashboard';
 let labActiveTab = 'orders';
 let pharmacySearch = '';
 let medicinePosSearch = '';
+let staffProfiles = [];
 
 function load(){
   const raw = localStorage.getItem(STORAGE_KEY);
-  if(!raw){ localStorage.setItem(STORAGE_KEY, JSON.stringify(seed)); return structuredClone(seed); }
+  if(!raw){ const fresh=structuredClone(seed);ensureInteropModel(fresh);localStorage.setItem(STORAGE_KEY, JSON.stringify(fresh));return fresh; }
   try{
     const parsed = JSON.parse(raw);
     parsed.audit ||= [];
@@ -173,14 +198,25 @@ function load(){
       buyerAddress:t.buyerAddress||'',
       taxSummary:t.taxSummary||null
     }));
+    const migrated=ensureInteropModel(parsed);
+    if(migrated || Number(parsed.meta?.schemaVersion||0)<7) localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
     return parsed;
-  }catch{return structuredClone(seed)}
+  }catch{const fresh=structuredClone(seed);ensureInteropModel(fresh);return fresh}
+}
+function updateBackendBadge(text,kind=''){
+  const el=document.getElementById('backendBadge'); if(!el)return; el.textContent=text; el.className='backend-badge'+(kind?' '+kind:'');
+}
+async function syncBackend(action){
+  if(!window.ACCUBackend?.configured || !window.ACCUBackend.status.user) return;
+  updateBackendBadge('Syncing…');
+  try{await window.ACCUBackend.syncWorkspace(db,action,activeRole);updateBackendBadge('Supabase connected','live')}catch(e){console.error(e);updateBackendBadge('Sync error','error')}
 }
 function save(action){
   if(action) db.audit.unshift({ts:new Date().toISOString(),user:activeRole,action});
   localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
   renderAll();
   updateRoleUI();
+  syncBackend(action);
 }
 function money(n){return new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(n||0))}
 function esc(s=''){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
@@ -390,7 +426,7 @@ window.openPatientModal=function(){
   if(!guard('addPatient')) return;
   modal('Add Patient',`<div class="form-grid">${field('Full name','pName','text','e.g. Ana Dela Cruz')}${field('Sex','pSex','select',['F','M'])}${field('Date of birth','pDob','date')}${field('Phone','pPhone')}<div class="field full"><label>Address</label><input id="pAddress"></div>${field('Discount','pDiscount','select',['None','Senior','PWD'])}</div>`,()=>{
     const name=v('pName');if(!name)return alert('Name is required.');
-    db.patients.push({id:nextId('P',db.patients),name,sex:v('pSex'),dob:v('pDob'),phone:v('pPhone'),address:v('pAddress'),discount:v('pDiscount')});save(`Added patient ${name}`);closeModal();
+    {const id=nextId('P',db.patients);db.patients.push({id,uuid:newUuid(),identifiers:[{system:'urn:accu:patient-id',value:id}],name,sex:v('pSex'),dob:v('pDob'),phone:v('pPhone'),address:v('pAddress'),discount:v('pDiscount')})};save(`Added patient ${name}`);closeModal();
   });
 };
 
@@ -415,9 +451,9 @@ window.openConsultModal=function(id=''){
   const receptionist=activeRole==='Receptionist';
   const title=existing?'Consultation Encounter':(receptionist?'Add to Consultation Queue':'New Consultation');
   const pId=existing?.patientId||db.patients[0]?.id||'';
-  modal(title,`<div class="form-grid">${patientSelect('cPatient',pId)}${field('Doctor','cDoctor','text',existing?.doctor||'')}${field('Date','cDate','date',existing?.date||today())}${field('Consultation fee','cFee','number',existing?.fee??500)}<div class="field full"><label>Chief complaint</label><input id="cChief" value="${esc(existing?.chief||'')}"></div><div class="field full"><label>Vitals</label><input id="cVitals" value="${esc(existing?.vitals||'')}" placeholder="BP, PR, RR, Temp"></div><div class="field full"><label>Assessment / Diagnosis</label><textarea id="cAssessment" ${receptionist?'disabled':''}>${esc(existing?.assessment||'')}</textarea></div>${receptionist?'<div class="notice blue full">Receptionist entries are added to the physician queue. Clinical assessment is completed under the Physician role.</div>':''}</div>`,()=>{
-    const record={patientId:v('cPatient'),doctor:v('cDoctor'),date:v('cDate')||today(),chief:v('cChief'),vitals:v('cVitals'),assessment:v('cAssessment'),fee:+v('cFee')||0,status:receptionist?'Queued':'Completed'};
-    if(existing){Object.assign(existing,record);save(`Updated consultation ${existing.id}`)}else{record.id=nextId('C',db.consultations);db.consultations.unshift(record);save(`Created consultation ${record.id}`)}
+  modal(title,`<div class="form-grid">${patientSelect('cPatient',pId)}${field('Doctor','cDoctor','text',existing?.doctor||'')}${field('Date','cDate','date',existing?.date||today())}${field('Consultation fee','cFee','number',existing?.fee??500)}<div class="field full"><label>Chief complaint</label><input id="cChief" value="${esc(existing?.chief||'')}"></div><div class="field full"><label>Vitals</label><input id="cVitals" value="${esc(existing?.vitals||'')}" placeholder="BP, PR, RR, Temp"></div><div class="field full"><label>Assessment / Diagnosis</label><textarea id="cAssessment" ${receptionist?'disabled':''}>${esc(existing?.assessment||'')}</textarea></div>${!receptionist?`<div class="field"><label>Diagnosis code system</label><select id="cDxSystem"><option value="http://hl7.org/fhir/sid/icd-10" ${(existing?.diagnosisCodeSystem||'').includes('icd-10')?'selected':''}>ICD-10</option><option value="http://snomed.info/sct" ${(existing?.diagnosisCodeSystem||'').includes('snomed')?'selected':''}>SNOMED CT</option></select></div><div class="field"><label>Diagnosis code (optional)</label><input id="cDxCode" value="${esc(existing?.diagnosisCode||'')}" placeholder="e.g. I10"></div>`:''}${receptionist?'<div class="notice blue full">Receptionist entries are added to the physician queue. Clinical assessment is completed under the Physician role.</div>':''}</div>`,()=>{
+    const record={patientId:v('cPatient'),doctor:v('cDoctor'),date:v('cDate')||today(),chief:v('cChief'),vitals:v('cVitals'),assessment:v('cAssessment'),diagnosisCodeSystem:v('cDxSystem')||existing?.diagnosisCodeSystem||'http://hl7.org/fhir/sid/icd-10',diagnosisCode:v('cDxCode')||existing?.diagnosisCode||'',fee:+v('cFee')||0,status:receptionist?'Queued':'Completed'};
+    if(existing){Object.assign(existing,record);save(`Updated consultation ${existing.id}`)}else{record.id=nextId('C',db.consultations);record.uuid=newUuid();db.consultations.unshift(record);save(`Created consultation ${record.id}`)}
     closeModal();
   },existing?'Save Encounter':(receptionist?'Add to Queue':'Save Encounter'));
 };
@@ -443,24 +479,27 @@ function labTable(rows){
   const hasActions=can('labStatus')||can('labResult');
   const head=`<th>Order</th><th>Date</th><th>Patient</th><th>Tests</th>${showAmount?'<th>Amount</th>':''}<th>Status</th>${showResult?'<th>Result</th>':''}${hasActions?'<th>Actions</th>':''}`;
   const colspan=6+(showAmount?1:0)+(showResult?1:0)+(hasActions?1:0)-1;
-  return `<div class="table-wrap"><table class="responsive-table"><thead><tr>${head}</tr></thead><tbody>${rows.map(o=>`<tr><td data-label="Order">${o.id}</td><td data-label="Date">${o.date}</td><td data-label="Patient"><strong>${esc(patientName(o.patientId))}</strong></td><td data-label="Tests">${o.tests.map(t=>`<span class="badge blue">${esc(t)}</span>`).join(' ')}</td>${showAmount?`<td data-label="Amount">${money(o.amount)}</td>`:''}<td data-label="Status"><span class="badge ${statusBadgeClass(o.status)}">${esc(o.status)}</span></td>${showResult?`<td data-label="Result">${o.resultNote?esc(o.resultNote):'<span class="muted">Not encoded</span>'}</td>`:''}${hasActions?`<td data-label="Actions"><div class="inline-actions">${can('labStatus')?labStatusControl(o):''}${can('labResult')?`<button class="small-btn" onclick="openLabResultModal('${o.id}')">Encode Result</button>`:''}</div></td>`:''}</tr>`).join('')||`<tr><td colspan="${colspan}" class="empty">No laboratory orders.</td></tr>`}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="responsive-table"><thead><tr>${head}</tr></thead><tbody>${rows.map(o=>`<tr><td data-label="Order">${o.id}</td><td data-label="Date">${o.date}</td><td data-label="Patient"><strong>${esc(patientName(o.patientId))}</strong></td><td data-label="Tests">${o.tests.map(t=>`<span class="badge blue">${esc(t)}</span>`).join(' ')}</td>${showAmount?`<td data-label="Amount">${money(o.amount)}</td>`:''}<td data-label="Status"><span class="badge ${statusBadgeClass(o.status)}">${esc(o.status)}</span></td>${showResult?`<td data-label="Result">${(o.resultComponents||[]).length?`<strong>${o.resultComponents.length} structured result${o.resultComponents.length===1?'':'s'}</strong>${o.resultNote?`<br><span class="muted">${esc(o.resultNote)}</span>`:''}`:(o.resultNote?esc(o.resultNote):'<span class="muted">Not encoded</span>')}</td>`:''}${hasActions?`<td data-label="Actions"><div class="inline-actions">${can('labStatus')?labStatusControl(o):''}${can('labResult')?`<button class="small-btn" onclick="openLabResultModal('${o.id}')">Encode Result</button>`:''}</div></td>`:''}</tr>`).join('')||`<tr><td colspan="${colspan}" class="empty">No laboratory orders.</td></tr>`}</tbody></table></div>`;
 }
 function labStatusControl(o){
   const statuses=['For Collection','Collected','Processing','For Validation','Released'];
   return `<select class="small-select" aria-label="Lab status" onchange="setLabStatus('${o.id}',this.value)">${statuses.map(s=>`<option ${o.status===s?'selected':''}>${s}</option>`).join('')}</select>`;
 }
 window.setLabStatus=function(id,status){if(!guard('labStatus'))return;const o=db.labOrders.find(x=>x.id===id);if(o){o.status=status;save(`Lab order ${id} changed to ${status}`)}};
+function resultComponentRow(c={},idx=0){return `<div class="result-component-row" data-result-row><div><label>Analyte / Component</label><input data-f="name" value="${esc(c.name||'')}" placeholder="Hemoglobin"></div><div><label>Standard code</label><input data-f="code" value="${esc(c.code||'')}" placeholder="LOINC if mapped"></div><div><label>Value</label><input data-f="value" value="${esc(c.value??'')}"></div><div><label>Unit</label><input data-f="unit" value="${esc(c.unit||'')}"></div><div><label>Ref. low</label><input data-f="low" value="${esc(c.low??'')}"></div><div><label>Ref. high</label><input data-f="high" value="${esc(c.high??'')}"></div><div><label>Flag</label><select data-f="flag">${['','N','L','H','Critical'].map(x=>`<option ${c.flag===x?'selected':''}>${x}</option>`).join('')}</select></div><button type="button" class="small-btn result-remove" onclick="this.closest('[data-result-row]').remove()">Remove</button></div>`}
+window.appendResultRow=function(){document.getElementById('resultComponents')?.insertAdjacentHTML('beforeend',resultComponentRow({},Date.now()))};
 window.openLabResultModal=function(id){
   if(!guard('labResult'))return;
   const o=db.labOrders.find(x=>x.id===id);if(!o)return;
-  modal(`Laboratory Result · ${o.id}`,`<div class="summary-box"><div class="summary-row"><span>Patient</span><strong>${esc(patientName(o.patientId))}</strong></div><div class="summary-row"><span>Tests</span><strong>${o.tests.map(esc).join(', ')}</strong></div></div><div class="field" style="margin-top:14px"><label>Result / Result note</label><textarea id="labResultNote" placeholder="MVP result note or summary">${esc(o.resultNote||'')}</textarea></div><div class="notice blue" style="margin-top:12px">For production, each test should use structured analytes, units, reference ranges, flags, validator and release timestamps.</div>`,()=>{o.resultNote=v('labResultNote');if(o.status==='For Collection'||o.status==='Collected')o.status='Processing';save(`Updated result for ${o.id}`);closeModal()},'Save Result');
+  const rows=(o.resultComponents?.length?o.resultComponents:[{}]).map(resultComponentRow).join('');
+  modal(`Laboratory Result · ${o.id}`,`<div class="summary-box"><div class="summary-row"><span>Patient</span><strong>${esc(patientName(o.patientId))}</strong></div><div class="summary-row"><span>Tests</span><strong>${o.tests.map(esc).join(', ')}</strong></div></div><div class="section-head" style="margin-top:14px"><div><h3>Structured result components</h3><p class="muted">Optional standard code is intended for a validated LOINC mapping.</p></div><button type="button" class="small secondary" onclick="appendResultRow()">+ Component</button></div><div id="resultComponents" class="result-components">${rows}</div><div class="field" style="margin-top:14px"><label>Result summary / comment</label><textarea id="labResultNote" placeholder="Human-readable interpretation or note">${esc(o.resultNote||'')}</textarea></div><div class="notice blue" style="margin-top:12px">FHIR export uses each structured row as an Observation. Blank standard codes remain local/unmapped rather than being guessed.</div>`,()=>{const comps=[...document.querySelectorAll('[data-result-row]')].map(row=>{const get=f=>row.querySelector(`[data-f="${f}"]`)?.value?.trim()||'';return {uuid:newUuid(),name:get('name'),codeSystem:get('code')?'http://loinc.org':'',code:get('code'),value:get('value'),unit:get('unit'),low:get('low'),high:get('high'),flag:get('flag')}}).filter(x=>x.name||x.value);o.resultComponents=comps;o.resultNote=v('labResultNote');if(o.status==='For Collection'||o.status==='Collected')o.status='Processing';save(`Updated structured result for ${o.id}`);closeModal()},'Save Result');
 };
 window.openLabModal=function(){
   if(!guard('createLab'))return;
   const labServices=db.services.filter(s=>['Laboratory','Diagnostic'].includes(s.type));
   modal('New Laboratory / Diagnostic Order',`<div class="form-grid">${patientSelect('lPatient')}${field('Date','lDate','date',today())}<div class="field full"><label>Tests</label>${labServices.map(s=>`<label style="display:flex;gap:8px;align-items:center;margin:9px 0"><input style="width:auto;min-height:0" type="checkbox" class="labTest" value="${s.id}"> ${esc(s.name)} — ${money(s.price)}</label>`).join('')}</div></div>`,()=>{
     const ids=[...document.querySelectorAll('.labTest:checked')].map(x=>x.value);if(!ids.length)return alert('Select at least one test.');
-    const tests=ids.map(id=>db.services.find(s=>s.id===id));const order={id:nextId('LAB',db.labOrders),patientId:v('lPatient'),date:v('lDate')||today(),tests:tests.map(x=>x.name),status:'For Collection',amount:tests.reduce((a,b)=>a+b.price,0),resultNote:''};db.labOrders.unshift(order);save(`Created lab order ${order.id}`);closeModal();
+    const tests=ids.map(id=>db.services.find(s=>s.id===id));const order={id:nextId('LAB',db.labOrders),uuid:newUuid(),patientId:v('lPatient'),date:v('lDate')||today(),serviceIds:tests.map(x=>x.id),tests:tests.map(x=>x.name),status:'For Collection',amount:tests.reduce((a,b)=>a+b.price,0),resultNote:'',resultComponents:[]};db.labOrders.unshift(order);save(`Created lab order ${order.id}`);closeModal();
   });
 };
 function labSuppliesTable(rows){
@@ -468,7 +507,7 @@ function labSuppliesTable(rows){
 }
 window.openLabSupplyModal=function(){
   if(!guard('addLabSupply'))return;
-  modal('Add Laboratory Supply Batch',`<div class="form-grid">${field('Supply name','lsName')}${field('Category','lsCategory','select',['Reagent','Collection','Consumable','PPE','Cleaning','Other'])}${field('Brand / Manufacturer','lsBrand')}${field('Supplier','lsSupplier')}${field('Lot / Batch','lsLot')}${field('Unit','lsUnit','text','piece')}${field('Expiry','lsExpiry','date')}${field('Quantity','lsQty','number',0)}${field('Reorder level','lsReorder','number',10)}${field('Cost per unit','lsCost','number',0)}</div>`,()=>{const name=v('lsName');if(!name)return alert('Supply name is required.');db.labSupplies.unshift({id:`LS-${Date.now()}`,name,category:v('lsCategory'),brand:v('lsBrand'),supplier:v('lsSupplier'),lot:v('lsLot'),unit:v('lsUnit')||'unit',expiry:v('lsExpiry'),qty:+v('lsQty')||0,reorder:+v('lsReorder')||0,cost:+v('lsCost')||0});save(`Added lab supply batch: ${name}`);closeModal()},'Add Supply');
+  modal('Add Laboratory Supply Batch',`<div class="form-grid">${field('Supply name','lsName')}${field('Category','lsCategory','select',['Reagent','Collection','Consumable','PPE','Cleaning','Other'])}${field('Brand / Manufacturer','lsBrand')}${field('Supplier','lsSupplier')}${field('Lot / Batch','lsLot')}${field('Unit','lsUnit','text','piece')}${field('Expiry','lsExpiry','date')}${field('Quantity','lsQty','number',0)}${field('Reorder level','lsReorder','number',10)}${field('Cost per unit','lsCost','number',0)}</div>`,()=>{const name=v('lsName');if(!name)return alert('Supply name is required.');{const id=`LS-${Date.now()}`;db.labSupplies.unshift({id,uuid:newUuid(),name,category:v('lsCategory'),brand:v('lsBrand'),supplier:v('lsSupplier'),lot:v('lsLot'),unit:v('lsUnit')||'unit',expiry:v('lsExpiry'),qty:+v('lsQty')||0,reorder:+v('lsReorder')||0,cost:+v('lsCost')||0});}save(`Added lab supply batch: ${name}`);closeModal()},'Add Supply');
 };
 window.openLabSupplyMovement=function(id,mode){
   if(!guard('useLabSupply'))return;const i=db.labSupplies.find(x=>x.id===id);if(!i)return;const use=mode==='use';
@@ -485,7 +524,7 @@ function renderPharmacy(){
 window.setPharmacySearch=function(value){pharmacySearch=value;renderPharmacy();const el=document.querySelector('#pharmacy .search-input');if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length)}};
 window.openMedicineModal=function(){
   if(!guard('addMedicine'))return;
-  modal('Add Medicine Batch',`<div class="form-grid">${field('Generic name','mGeneric')}${field('Brand name','mBrand')}${field('Strength','mStrength')}${field('Dosage form','mForm')}${field('Batch / Lot','mBatch')}${field('Supplier','mSupplier')}${field('Expiry','mExpiry','date')}${field('Quantity','mQty','number',0)}${field('Reorder level','mReorder','number',20)}${field('Cost per unit','mCost','number',0)}${field('Selling price','mSell','number',0)}</div>`,()=>{const generic=v('mGeneric');if(!generic)return alert('Generic name is required.');db.inventory.push({id:`MED-${Date.now()}`,generic,brand:v('mBrand'),strength:v('mStrength'),form:v('mForm'),batch:v('mBatch'),supplier:v('mSupplier'),expiry:v('mExpiry'),qty:+v('mQty')||0,reorder:+v('mReorder')||0,cost:+v('mCost')||0,sell:+v('mSell')||0,taxClass:'Unclassified'});save(`Added pharmacy medicine batch: ${generic}`);closeModal()});
+  modal('Add Medicine Batch',`<div class="form-grid">${field('Generic name','mGeneric')}${field('Brand name','mBrand')}${field('Strength','mStrength')}${field('Dosage form','mForm')}${field('Batch / Lot','mBatch')}${field('Supplier','mSupplier')}${field('Expiry','mExpiry','date')}${field('Quantity','mQty','number',0)}${field('Reorder level','mReorder','number',20)}${field('Cost per unit','mCost','number',0)}${field('Selling price','mSell','number',0)}${field('Standard code system','mStdSystem','select',['','RxNorm','Local / other'])}${field('Standard medication code','mStdCode')}</div>`,()=>{const generic=v('mGeneric');if(!generic)return alert('Generic name is required.');{const id=`MED-${Date.now()}`;const sys=v('mStdSystem');db.inventory.push({id,uuid:newUuid(),localCode:id,generic,brand:v('mBrand'),strength:v('mStrength'),form:v('mForm'),batch:v('mBatch'),supplier:v('mSupplier'),expiry:v('mExpiry'),qty:+v('mQty')||0,reorder:+v('mReorder')||0,cost:+v('mCost')||0,sell:+v('mSell')||0,taxClass:'Unclassified',standardCodeSystem:sys==='RxNorm'?'http://www.nlm.nih.gov/research/umls/rxnorm':(sys==='Local / other'?'urn:accu:medication-code':''),standardCode:v('mStdCode')})};save(`Added pharmacy medicine batch: ${generic}`);closeModal()});
 };
 
 
@@ -686,9 +725,140 @@ window.exportStructuredJSON=function(){
 function taxClassOptions(current){return ['Unclassified','VATable','VAT-exempt','Zero-rated','Non-VAT'].map(x=>`<option value="${x}" ${current===x?'selected':''}>${x}</option>`).join('')}
 window.setTaxClass=function(kind,id,value){if(activeRole!=='Administrator')return alert('Administrator access required.');const list=kind==='medicine'?db.inventory:db.services;const row=list.find(x=>x.id===id);if(!row)return;row.taxClass=value;db.audit.unshift({ts:new Date().toISOString(),user:activeRole,action:`Set ${kind} tax classification for ${id} to ${value}`});localStorage.setItem(STORAGE_KEY,JSON.stringify(db))};
 function renderTaxMatrix(){const rows=[...db.services.map(x=>({kind:'service',id:x.id,label:`${x.name} (${x.type})`,cls:x.taxClass||'Unclassified'})),...db.inventory.map(x=>({kind:'medicine',id:x.id,label:`${x.generic} ${x.strength} · ${x.batch}`,cls:x.taxClass||'Unclassified'}))];return `<div class="table-wrap"><table class="responsive-table"><thead><tr><th>Item / Service</th><th>Type</th><th>Tax Classification</th></tr></thead><tbody>${rows.map(r=>`<tr><td data-label="Item">${esc(r.label)}</td><td data-label="Type">${r.kind==='medicine'?'Pharmacy':'Service'}</td><td data-label="Tax Classification"><select class="small-select" onchange="setTaxClass('${r.kind}','${r.id}',this.value)">${taxClassOptions(r.cls)}</select></td></tr>`).join('')}</tbody></table></div>`}
+
+function staffAccountsPanelHtml(){
+  if(!window.ACCUBackend?.configured){
+    return `<div class="card" style="margin-bottom:16px"><h2>Staff User Accounts</h2><div class="notice blue">Connect Supabase to manage real staff accounts. Offline demo mode uses the role preview only.</div></div>`;
+  }
+  return `<div class="card" id="staffAccountsPanel" style="margin-bottom:16px">
+    <div class="section-head">
+      <div><h2>Staff User Accounts</h2><p class="muted" style="margin:5px 0 0">Create staff logins, assign roles, disable access, or issue a new temporary password.</p></div>
+      <button class="primary" onclick="openCreateStaffModal()">+ Create Staff Account</button>
+    </div>
+    <div class="notice blue" style="margin-bottom:12px"><strong>Temporary password workflow:</strong> the administrator gives the initial password privately. On first sign-in, the staff member is blocked from clinic modules until they set their own password.</div>
+    <div class="table-wrap"><table class="responsive-table">
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Password</th><th>Actions</th></tr></thead>
+      <tbody id="staffAccountsBody"><tr><td colspan="6" class="muted">Loading staff accounts…</td></tr></tbody>
+    </table></div>
+  </div>`;
+}
+async function refreshStaffAccounts(){
+  const body=document.getElementById('staffAccountsBody');
+  if(!body || !window.ACCUBackend?.configured)return;
+  try{
+    staffProfiles=await window.ACCUBackend.listProfiles();
+    const me=window.ACCUBackend.status.user?.id;
+    body.innerHTML=staffProfiles.length?staffProfiles.map(p=>{
+      const self=p.user_id===me;
+      const roleOptions=Object.keys(ROLE_CONFIG).map(r=>`<option value="${esc(r)}" ${p.role===r?'selected':''}>${esc(r)}</option>`).join('');
+      return `<tr>
+        <td data-label="Name"><strong>${esc(p.full_name||'Unnamed user')}</strong>${self?'<br><span class="muted">Your account</span>':''}</td>
+        <td data-label="Email">${esc(p.email||'—')}</td>
+        <td data-label="Role"><select class="small-select" onchange="changeStaffRole('${p.user_id}',this.value)" ${self?'disabled':''}>${roleOptions}</select></td>
+        <td data-label="Status"><span class="badge ${p.active?'green':'red'}">${p.active?'Active':'Disabled'}</span></td>
+        <td data-label="Password">${p.must_change_password?'<span class="badge amber">Change required</span>':'<span class="badge green">Set by user</span>'}</td>
+        <td data-label="Actions"><div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="secondary small-btn" onclick="openResetTempPassword('${p.user_id}')">Temp password</button>
+          ${self?'<button class="ghost small-btn" onclick="openMyPasswordModal()">Change mine</button>':`<button class="ghost small-btn ${p.active?'danger':''}" onclick="toggleStaffActive('${p.user_id}',${!p.active})">${p.active?'Disable':'Enable'}</button>`}
+        </div></td>
+      </tr>`;
+    }).join(''):`<tr><td colspan="6" class="muted">No staff accounts found.</td></tr>`;
+  }catch(e){
+    console.error(e);
+    body.innerHTML=`<tr><td colspan="6"><div class="notice red">Unable to load staff accounts: ${esc(e.message||String(e))}</div></td></tr>`;
+  }
+}
+window.openCreateStaffModal=function(){
+  if(activeRole!=='Administrator')return alert('Administrator access required.');
+  const roles=Object.keys(ROLE_CONFIG);
+  modal('Create Staff Account',`
+    <div class="form-grid">
+      <div class="field full"><label>Full name</label><input id="staffFullName" autocomplete="name" placeholder="e.g. Maria Dela Cruz"></div>
+      <div class="field full"><label>Email (used to sign in)</label><input id="staffEmail" type="email" autocomplete="off" placeholder="staff@example.com"></div>
+      <div class="field full"><label>Role</label><select id="staffRole">${roles.map(r=>`<option>${esc(r)}</option>`).join('')}</select></div>
+      <div class="field"><label>Temporary password</label><input id="staffTempPassword" type="password" autocomplete="new-password" minlength="10"></div>
+      <div class="field"><label>Confirm temporary password</label><input id="staffTempPassword2" type="password" autocomplete="new-password" minlength="10"></div>
+    </div>
+    <div class="notice" style="margin-top:12px">Use at least 10 characters and send it privately. The password is sent directly to Supabase Auth and is not saved in the ACCU profile table.</div>
+    <p id="staffCreateError" class="auth-error"></p>
+  `,async()=>{
+    const fullName=v('staffFullName'),email=v('staffEmail'),role=v('staffRole');
+    const p1=document.getElementById('staffTempPassword').value,p2=document.getElementById('staffTempPassword2').value;
+    const err=document.getElementById('staffCreateError');err.textContent='';
+    if(!fullName||!email)return err.textContent='Full name and email are required.';
+    if(p1.length<10)return err.textContent='Temporary password must be at least 10 characters.';
+    if(p1!==p2)return err.textContent='Passwords do not match.';
+    const btn=document.getElementById('modalSave');btn.disabled=true;btn.textContent='Creating…';
+    try{
+      await window.ACCUBackend.createStaffUser({email,fullName,role,temporaryPassword:p1});
+      closeModal();await refreshStaffAccounts();
+      alert(`Account created for ${fullName}. Give the temporary password privately; it will not be shown again.`);
+    }catch(e){err.textContent=e.message||'Unable to create staff account.';btn.disabled=false;btn.textContent='Create Account'}
+  },'Create Account');
+};
+window.openResetTempPassword=function(userId){
+  if(activeRole!=='Administrator')return alert('Administrator access required.');
+  const profile=staffProfiles.find(p=>p.user_id===userId);
+  const name=profile?.full_name||profile?.email||'this staff account';
+  modal('Issue Temporary Password',`
+    <p class="muted">This will replace the current password for <strong>${esc(name)}</strong>. At the next sign-in, the user must create a new personal password before accessing clinic data.</p>
+    <div class="form-grid">
+      <div class="field"><label>New temporary password</label><input id="resetTemp1" type="password" autocomplete="new-password" minlength="10"></div>
+      <div class="field"><label>Confirm</label><input id="resetTemp2" type="password" autocomplete="new-password" minlength="10"></div>
+    </div>
+    <p id="staffResetError" class="auth-error"></p>
+  `,async()=>{
+    const p1=document.getElementById('resetTemp1').value,p2=document.getElementById('resetTemp2').value;
+    const err=document.getElementById('staffResetError');err.textContent='';
+    if(p1.length<10)return err.textContent='Temporary password must be at least 10 characters.';
+    if(p1!==p2)return err.textContent='Passwords do not match.';
+    const btn=document.getElementById('modalSave');btn.disabled=true;btn.textContent='Resetting…';
+    try{
+      await window.ACCUBackend.resetStaffPassword(userId,p1);
+      closeModal();await refreshStaffAccounts();
+      alert('Temporary password issued. The staff member will be required to change it on next sign-in.');
+    }catch(e){err.textContent=e.message||'Unable to reset password.';btn.disabled=false;btn.textContent='Issue Temporary Password'}
+  },'Issue Temporary Password');
+};
+window.toggleStaffActive=async function(userId,active){
+  if(activeRole!=='Administrator')return alert('Administrator access required.');
+  if(userId===window.ACCUBackend.status.user?.id)return alert('You cannot disable your own account here.');
+  if(!confirm(`${active?'Enable':'Disable'} this staff account?`))return;
+  try{await window.ACCUBackend.updateStaffProfile(userId,{active});await refreshStaffAccounts()}
+  catch(e){alert(e.message||'Unable to update account.')}
+};
+window.changeStaffRole=async function(userId,role){
+  if(activeRole!=='Administrator')return alert('Administrator access required.');
+  if(userId===window.ACCUBackend.status.user?.id)return refreshStaffAccounts();
+  try{await window.ACCUBackend.updateStaffProfile(userId,{role});await refreshStaffAccounts()}
+  catch(e){alert(e.message||'Unable to update role.');await refreshStaffAccounts()}
+};
+window.openMyPasswordModal=function(){
+  if(!window.ACCUBackend?.configured)return alert('Password management is available in connected mode.');
+  modal('Change My Password',`
+    <div class="form-grid">
+      <div class="field full"><label>Current password</label><input id="myCurrentPassword" type="password" autocomplete="current-password"></div>
+      <div class="field full"><label>New password</label><input id="myNewPassword1" type="password" autocomplete="new-password" minlength="10"></div>
+      <div class="field full"><label>Confirm new password</label><input id="myNewPassword2" type="password" autocomplete="new-password" minlength="10"></div>
+    </div>
+    <p id="myPasswordError" class="auth-error"></p>
+  `,async()=>{
+    const current=document.getElementById('myCurrentPassword').value;
+    const p1=document.getElementById('myNewPassword1').value,p2=document.getElementById('myNewPassword2').value;
+    const err=document.getElementById('myPasswordError');err.textContent='';
+    if(p1.length<10)return err.textContent='Password must be at least 10 characters.';
+    if(p1!==p2)return err.textContent='Passwords do not match.';
+    const btn=document.getElementById('modalSave');btn.disabled=true;btn.textContent='Updating…';
+    try{await window.ACCUBackend.changeOwnPassword(p1,current);closeModal();alert('Password updated successfully.')}
+    catch(e){err.textContent=e.message||'Unable to change password.';btn.disabled=false;btn.textContent='Update Password'}
+  },'Update Password');
+};
+
 function renderSettings(){
   if(!canView('settings'))return;const c=entityCfg('clinic');const p=entityCfg('pharmacy');const missing=birSetupMissing('clinic');const pmissing=birSetupMissing('pharmacy');const lastIssued=db.transactions.find(t=>t.invoiceNo)?.invoiceNo||'None yet';
-  document.getElementById('settings').innerHTML=`<div class="grid grid-2"><div class="card"><h2>BIR Readiness</h2><p class="muted">The system can be configured to generate an invoice with the clinic's registered details and a sequential invoice number. This screen does <strong>not</strong> represent BIR approval, accreditation or a Permit to Use.</p><div class="bir-readiness ${missing.length?'not-ready':'ready'}"><strong>${missing.length?'Setup incomplete':'Core invoice fields configured'}</strong><span>${missing.length?`Missing: ${missing.map(esc).join(', ')}`:'Verify the entries against ACCU’s BIR Certificate of Registration and actual Permit to Use before production.'}</span></div><div class="summary-row"><span>Next invoice</span><strong>${esc(invoiceNumberFrom(c.invoiceNextNumber||1))}</strong></div><div class="summary-row"><span>Last issued</span><strong>${esc(lastIssued)}</strong></div><div class="summary-row"><span>Tax status</span><strong>${esc(c.taxType||'NON-VAT')}</strong></div><div class="notice blue" style="margin-top:12px">BIR’s EOPT rules use <strong>Invoice</strong> as the principal sales document. Official/Payment/Collection Receipts are supplementary documents for collection/payment scenarios, depending on the transaction and the clinic’s accounting setup.</div></div><div class="card"><h2>Registered Taxpayer Details</h2><div class="form-grid"><div class="field full"><label>Registered name</label><input id="cfgClinicName" value="${esc(c.name||'')}" placeholder="As shown on BIR registration"></div><div class="field full"><label>Trade name</label><input id="cfgTradeName" value="${esc(c.tradeName||'')}" placeholder="If applicable"></div><div class="field full"><label>Registered business address</label><input id="cfgAddress" value="${esc(c.address||'')}" placeholder="As registered with BIR"></div><div class="field"><label>Contact</label><input id="cfgContact" value="${esc(c.contact||'')}" placeholder="Phone / mobile"></div><div class="field"><label>TIN</label><input id="cfgTin" value="${esc(c.tin||'')}" placeholder="Do not guess"></div><div class="field"><label>Branch code</label><input id="cfgBranchCode" value="${esc(c.branchCode||'')}" placeholder="e.g. 00000"></div><div class="field"><label>Tax status</label><select id="cfgTaxType"><option ${c.taxType==='NON-VAT'?'selected':''}>NON-VAT</option><option ${c.taxType==='VAT'?'selected':''}>VAT</option></select></div><div class="field"><label>VAT rate %</label><input id="cfgVatRate" type="number" min="0" max="100" step="0.01" value="${esc(c.vatRate??12)}"></div></div></div></div><div class="grid grid-2" style="margin-top:16px"><div class="card"><h2>Invoice Series</h2><p class="muted">Use the series actually approved/registered for ACCU. Changing the next number after live issuance can create duplicate or skipped invoice numbers.</p><div class="form-grid"><div class="field"><label>Invoice label</label><select id="cfgInvoiceLabel">${['INVOICE','SALES INVOICE','CASH INVOICE','SERVICE INVOICE'].map(x=>`<option ${c.invoiceLabel===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Prefix</label><input id="cfgInvoicePrefix" value="${esc(c.invoicePrefix||'')}"></div><div class="field"><label>Number of digits</label><input id="cfgInvoiceDigits" type="number" min="1" max="12" value="${esc(c.invoiceDigits||7)}"></div><div class="field"><label>Next serial number</label><input id="cfgInvoiceNext" type="number" min="1" value="${esc(c.invoiceNextNumber||1)}"></div><div class="field"><label>Payment receipt prefix</label><input id="cfgPaymentReceiptPrefix" value="${esc(c.paymentReceiptPrefix||'PR-')}"></div><div class="field"><label>Payment receipt digits</label><input id="cfgPaymentReceiptDigits" type="number" min="1" max="12" value="${esc(c.paymentReceiptDigits||7)}"></div><div class="field"><label>Next payment receipt no.</label><input id="cfgPaymentReceiptNext" type="number" min="1" value="${esc(c.paymentReceiptNextNumber||1)}"></div><div class="field full"><label>Invoice footer</label><input id="cfgFooter" value="${esc(c.receiptFooter||'')}"></div></div></div><div class="card"><h2>POS / Permit Details</h2><p class="muted">Enter only details from ACCU’s actual BIR authorization/registration documents.</p><div class="form-grid"><div class="field full"><label>Permit to Use (PTU) number</label><input id="cfgPermitNo" value="${esc(c.permitNo||'')}" placeholder="Leave blank until issued"></div><div class="field"><label>Permit date</label><input id="cfgPermitDate" type="date" value="${esc(c.permitDate||'')}"></div><div class="field"><label>MIN / machine identification no.</label><input id="cfgMin" value="${esc(c.min||'')}" placeholder="If applicable"></div><div class="field full"><label>Terminal / machine serial no.</label><input id="cfgMachineSerial" value="${esc(c.machineSerial||'')}" placeholder="If applicable"></div></div></div></div><div class="card" style="margin-top:16px"><div class="section-head"><div><h2>Separate Pharmacy Entity</h2><p class="muted" style="margin:5px 0 0">Pharmacy inventory, sales and invoice series are separate from the clinic/laboratory entity.</p></div></div><div class="bir-readiness ${pmissing.length?'not-ready':'ready'}"><strong>${pmissing.length?'Pharmacy setup incomplete':'Pharmacy core invoice fields configured'}</strong><span>${pmissing.length?`Missing: ${pmissing.map(esc).join(', ')}`:'Verify against the pharmacy entity’s own BIR registration and authorization documents.'}</span></div><div class="form-grid"><div class="field full"><label>Pharmacy registered name</label><input id="phName" value="${esc(p.name||'')}" placeholder="Do not guess — use registered name"></div><div class="field full"><label>Trade name</label><input id="phTradeName" value="${esc(p.tradeName||'')}"></div><div class="field full"><label>Registered address</label><input id="phAddress" value="${esc(p.address||'')}"></div><div class="field"><label>Contact</label><input id="phContact" value="${esc(p.contact||'')}"></div><div class="field"><label>TIN</label><input id="phTin" value="${esc(p.tin||'')}"></div><div class="field"><label>Branch code</label><input id="phBranchCode" value="${esc(p.branchCode||'')}"></div><div class="field"><label>Tax status</label><select id="phTaxType"><option ${p.taxType==='NON-VAT'?'selected':''}>NON-VAT</option><option ${p.taxType==='VAT'?'selected':''}>VAT</option></select></div><div class="field"><label>VAT rate %</label><input id="phVatRate" type="number" value="${esc(p.vatRate??12)}"></div><div class="field"><label>Invoice label</label><select id="phInvoiceLabel">${['INVOICE','SALES INVOICE','CASH INVOICE','SERVICE INVOICE'].map(x=>`<option ${p.invoiceLabel===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Invoice prefix</label><input id="phInvoicePrefix" value="${esc(p.invoicePrefix||'PH-')}"></div><div class="field"><label>Invoice digits</label><input id="phInvoiceDigits" type="number" min="1" max="12" value="${esc(p.invoiceDigits||7)}"></div><div class="field"><label>Next invoice no.</label><input id="phInvoiceNext" type="number" min="1" value="${esc(p.invoiceNextNumber||1)}"></div><div class="field full"><label>Permit to Use (PTU) no.</label><input id="phPermitNo" value="${esc(p.permitNo||'')}"></div><div class="field"><label>Permit date</label><input id="phPermitDate" type="date" value="${esc(p.permitDate||'')}"></div><div class="field"><label>MIN</label><input id="phMin" value="${esc(p.min||'')}"></div><div class="field full"><label>Terminal / Machine S/N</label><input id="phMachineSerial" value="${esc(p.machineSerial||'')}"></div><div class="field full"><label>Invoice footer</label><input id="phFooter" value="${esc(p.receiptFooter||'Thank you.')}"></div></div></div><div class="card" style="margin-top:16px"><div class="section-head"><div><h2>Tax Classification</h2><p class="muted" style="margin:5px 0 0">For VAT mode, classify every billed service/medicine before checkout. Do not infer medical/pharmacy tax treatment from this demo—have ACCU’s accountant/bookkeeper validate the classifications.</p></div></div>${renderTaxMatrix()}</div><div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="primary" onclick="saveReceiptConfig()">Save BIR / Invoice Configuration</button></div><div class="grid grid-2" style="margin-top:16px"><div class="card"><h2>Electronic Invoice Readiness</h2><p class="muted">The Reports module can export structured JSON containing seller, buyer, item, discount, tax and payment fields. It is an internal interoperability export only.</p><div class="notice blue">It is <strong>not</strong> a BIR EIS-certified payload, does not transmit sales to BIR, and does not constitute a Permit to Transmit. Production e-invoicing must follow the BIR requirements applicable to ACCU’s taxpayer classification and system.</div></div><div class="card"><h2>Thermal Printer Setup</h2><p class="muted">The MVP uses the browser print dialog. Install the printer driver on the cashier computer, select the 80 mm receipt paper size, set margins to none/minimum, and disable browser headers/footers.</p><div class="notice">For silent/direct printing, auto-cut and cash-drawer commands, a production version can add an ESC/POS print bridge or dedicated desktop POS client.</div></div><div class="card"><h2>Production Security</h2><p class="muted">This demo still stores data in browser localStorage. Before real patient or financial use, move authentication, permissions, audit logs, backups and patient data to a secure backend/database.</p><div class="notice red">Do not deploy this browser-only demo as the clinic’s live medical/financial record system.</div></div></div><div class="section-head"><h2>Audit Log</h2></div><div class="table-wrap"><table class="responsive-table"><thead><tr><th>Timestamp</th><th>User / Role</th><th>Action</th></tr></thead><tbody>${db.audit.slice(0,100).map(a=>`<tr><td data-label="Timestamp">${new Date(a.ts).toLocaleString('en-PH')}</td><td data-label="Role">${esc(a.user)}</td><td data-label="Action">${esc(a.action)}</td></tr>`).join('')}</tbody></table></div>`;
+  document.getElementById('settings').innerHTML=`<div class="grid grid-2"><div class="card"><h2>BIR Readiness</h2><p class="muted">The system can be configured to generate an invoice with the clinic's registered details and a sequential invoice number. This screen does <strong>not</strong> represent BIR approval, accreditation or a Permit to Use.</p><div class="bir-readiness ${missing.length?'not-ready':'ready'}"><strong>${missing.length?'Setup incomplete':'Core invoice fields configured'}</strong><span>${missing.length?`Missing: ${missing.map(esc).join(', ')}`:'Verify the entries against ACCU’s BIR Certificate of Registration and actual Permit to Use before production.'}</span></div><div class="summary-row"><span>Next invoice</span><strong>${esc(invoiceNumberFrom(c.invoiceNextNumber||1))}</strong></div><div class="summary-row"><span>Last issued</span><strong>${esc(lastIssued)}</strong></div><div class="summary-row"><span>Tax status</span><strong>${esc(c.taxType||'NON-VAT')}</strong></div><div class="notice blue" style="margin-top:12px">BIR’s EOPT rules use <strong>Invoice</strong> as the principal sales document. Official/Payment/Collection Receipts are supplementary documents for collection/payment scenarios, depending on the transaction and the clinic’s accounting setup.</div></div><div class="card"><h2>Registered Taxpayer Details</h2><div class="form-grid"><div class="field full"><label>Registered name</label><input id="cfgClinicName" value="${esc(c.name||'')}" placeholder="As shown on BIR registration"></div><div class="field full"><label>Trade name</label><input id="cfgTradeName" value="${esc(c.tradeName||'')}" placeholder="If applicable"></div><div class="field full"><label>Registered business address</label><input id="cfgAddress" value="${esc(c.address||'')}" placeholder="As registered with BIR"></div><div class="field"><label>Contact</label><input id="cfgContact" value="${esc(c.contact||'')}" placeholder="Phone / mobile"></div><div class="field"><label>TIN</label><input id="cfgTin" value="${esc(c.tin||'')}" placeholder="Do not guess"></div><div class="field"><label>Branch code</label><input id="cfgBranchCode" value="${esc(c.branchCode||'')}" placeholder="e.g. 00000"></div><div class="field"><label>Tax status</label><select id="cfgTaxType"><option ${c.taxType==='NON-VAT'?'selected':''}>NON-VAT</option><option ${c.taxType==='VAT'?'selected':''}>VAT</option></select></div><div class="field"><label>VAT rate %</label><input id="cfgVatRate" type="number" min="0" max="100" step="0.01" value="${esc(c.vatRate??12)}"></div></div></div></div><div class="grid grid-2" style="margin-top:16px"><div class="card"><h2>Invoice Series</h2><p class="muted">Use the series actually approved/registered for ACCU. Changing the next number after live issuance can create duplicate or skipped invoice numbers.</p><div class="form-grid"><div class="field"><label>Invoice label</label><select id="cfgInvoiceLabel">${['INVOICE','SALES INVOICE','CASH INVOICE','SERVICE INVOICE'].map(x=>`<option ${c.invoiceLabel===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Prefix</label><input id="cfgInvoicePrefix" value="${esc(c.invoicePrefix||'')}"></div><div class="field"><label>Number of digits</label><input id="cfgInvoiceDigits" type="number" min="1" max="12" value="${esc(c.invoiceDigits||7)}"></div><div class="field"><label>Next serial number</label><input id="cfgInvoiceNext" type="number" min="1" value="${esc(c.invoiceNextNumber||1)}"></div><div class="field"><label>Payment receipt prefix</label><input id="cfgPaymentReceiptPrefix" value="${esc(c.paymentReceiptPrefix||'PR-')}"></div><div class="field"><label>Payment receipt digits</label><input id="cfgPaymentReceiptDigits" type="number" min="1" max="12" value="${esc(c.paymentReceiptDigits||7)}"></div><div class="field"><label>Next payment receipt no.</label><input id="cfgPaymentReceiptNext" type="number" min="1" value="${esc(c.paymentReceiptNextNumber||1)}"></div><div class="field full"><label>Invoice footer</label><input id="cfgFooter" value="${esc(c.receiptFooter||'')}"></div></div></div><div class="card"><h2>POS / Permit Details</h2><p class="muted">Enter only details from ACCU’s actual BIR authorization/registration documents.</p><div class="form-grid"><div class="field full"><label>Permit to Use (PTU) number</label><input id="cfgPermitNo" value="${esc(c.permitNo||'')}" placeholder="Leave blank until issued"></div><div class="field"><label>Permit date</label><input id="cfgPermitDate" type="date" value="${esc(c.permitDate||'')}"></div><div class="field"><label>MIN / machine identification no.</label><input id="cfgMin" value="${esc(c.min||'')}" placeholder="If applicable"></div><div class="field full"><label>Terminal / machine serial no.</label><input id="cfgMachineSerial" value="${esc(c.machineSerial||'')}" placeholder="If applicable"></div></div></div></div><div class="card" style="margin-top:16px"><div class="section-head"><div><h2>Separate Pharmacy Entity</h2><p class="muted" style="margin:5px 0 0">Pharmacy inventory, sales and invoice series are separate from the clinic/laboratory entity.</p></div></div><div class="bir-readiness ${pmissing.length?'not-ready':'ready'}"><strong>${pmissing.length?'Pharmacy setup incomplete':'Pharmacy core invoice fields configured'}</strong><span>${pmissing.length?`Missing: ${pmissing.map(esc).join(', ')}`:'Verify against the pharmacy entity’s own BIR registration and authorization documents.'}</span></div><div class="form-grid"><div class="field full"><label>Pharmacy registered name</label><input id="phName" value="${esc(p.name||'')}" placeholder="Do not guess — use registered name"></div><div class="field full"><label>Trade name</label><input id="phTradeName" value="${esc(p.tradeName||'')}"></div><div class="field full"><label>Registered address</label><input id="phAddress" value="${esc(p.address||'')}"></div><div class="field"><label>Contact</label><input id="phContact" value="${esc(p.contact||'')}"></div><div class="field"><label>TIN</label><input id="phTin" value="${esc(p.tin||'')}"></div><div class="field"><label>Branch code</label><input id="phBranchCode" value="${esc(p.branchCode||'')}"></div><div class="field"><label>Tax status</label><select id="phTaxType"><option ${p.taxType==='NON-VAT'?'selected':''}>NON-VAT</option><option ${p.taxType==='VAT'?'selected':''}>VAT</option></select></div><div class="field"><label>VAT rate %</label><input id="phVatRate" type="number" value="${esc(p.vatRate??12)}"></div><div class="field"><label>Invoice label</label><select id="phInvoiceLabel">${['INVOICE','SALES INVOICE','CASH INVOICE','SERVICE INVOICE'].map(x=>`<option ${p.invoiceLabel===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Invoice prefix</label><input id="phInvoicePrefix" value="${esc(p.invoicePrefix||'PH-')}"></div><div class="field"><label>Invoice digits</label><input id="phInvoiceDigits" type="number" min="1" max="12" value="${esc(p.invoiceDigits||7)}"></div><div class="field"><label>Next invoice no.</label><input id="phInvoiceNext" type="number" min="1" value="${esc(p.invoiceNextNumber||1)}"></div><div class="field full"><label>Permit to Use (PTU) no.</label><input id="phPermitNo" value="${esc(p.permitNo||'')}"></div><div class="field"><label>Permit date</label><input id="phPermitDate" type="date" value="${esc(p.permitDate||'')}"></div><div class="field"><label>MIN</label><input id="phMin" value="${esc(p.min||'')}"></div><div class="field full"><label>Terminal / Machine S/N</label><input id="phMachineSerial" value="${esc(p.machineSerial||'')}"></div><div class="field full"><label>Invoice footer</label><input id="phFooter" value="${esc(p.receiptFooter||'Thank you.')}"></div></div></div><div class="card" style="margin-top:16px"><div class="section-head"><div><h2>Tax Classification</h2><p class="muted" style="margin:5px 0 0">For VAT mode, classify every billed service/medicine before checkout. Do not infer medical/pharmacy tax treatment from this demo—have ACCU’s accountant/bookkeeper validate the classifications.</p></div></div>${renderTaxMatrix()}</div><div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="primary" onclick="saveReceiptConfig()">Save BIR / Invoice Configuration</button></div><div class="grid grid-2" style="margin-top:16px"><div class="card"><h2>Electronic Invoice Readiness</h2><p class="muted">The Reports module can export structured JSON containing seller, buyer, item, discount, tax and payment fields. It is an internal interoperability export only.</p><div class="notice blue">It is <strong>not</strong> a BIR EIS-certified payload, does not transmit sales to BIR, and does not constitute a Permit to Transmit. Production e-invoicing must follow the BIR requirements applicable to ACCU’s taxpayer classification and system.</div></div><div class="card"><h2>Thermal Printer Setup</h2><p class="muted">The MVP uses the browser print dialog. Install the printer driver on the cashier computer, select the 80 mm receipt paper size, set margins to none/minimum, and disable browser headers/footers.</p><div class="notice">For silent/direct printing, auto-cut and cash-drawer commands, a production version can add an ESC/POS print bridge or dedicated desktop POS client.</div></div><div class="card"><h2>Production Security</h2><p class="muted">Connected mode uses Supabase Auth, PostgreSQL and Row Level Security. Local storage remains only as a compatibility cache in this MVP; production should continue moving operations to record-level backend transactions, backups and controlled deployment.</p><div class="notice red">Treat v9 as a backend-connected MVP. Complete production hardening, privacy review, backups, concurrency handling and transactional invoice issuance before live clinical/financial use.</div></div></div><div class="section-head"><h2>Audit Log</h2></div><div class="table-wrap"><table class="responsive-table"><thead><tr><th>Timestamp</th><th>User / Role</th><th>Action</th></tr></thead><tbody>${db.audit.slice(0,100).map(a=>`<tr><td data-label="Timestamp">${new Date(a.ts).toLocaleString('en-PH')}</td><td data-label="Role">${esc(a.user)}</td><td data-label="Action">${esc(a.action)}</td></tr>`).join('')}</tbody></table></div>`;
+  document.getElementById("settings").insertAdjacentHTML("afterbegin",staffAccountsPanelHtml());
+  if(window.ACCUBackend?.configured)setTimeout(refreshStaffAccounts,0);
 }
 window.saveReceiptConfig=function(){
   if(activeRole!=='Administrator')return alert('Administrator access required.');const next=Math.max(1,Number(v('cfgInvoiceNext')||1));const prefix=v('cfgInvoicePrefix');const digits=Math.max(1,Math.min(12,Number(v('cfgInvoiceDigits')||7)));const candidate=`${prefix}${String(next).padStart(digits,'0')}`;if(db.transactions.some(t=>t.invoiceNo===candidate))return alert(`Invoice ${candidate} already exists. Choose the next unused serial number.`);const prPrefix=v('cfgPaymentReceiptPrefix')||'PR-';const prDigits=Math.max(1,Math.min(12,Number(v('cfgPaymentReceiptDigits')||7)));const prNext=Math.max(1,Number(v('cfgPaymentReceiptNext')||1));const prCandidate=`${prPrefix}${String(prNext).padStart(prDigits,'0')}`;if(db.transactions.some(t=>t.paymentReceiptNo===prCandidate))return alert(`Payment Receipt ${prCandidate} already exists. Choose the next unused serial number.`);
@@ -696,6 +866,30 @@ window.saveReceiptConfig=function(){
   const phNext=Math.max(1,Number(v('phInvoiceNext')||1)),phPrefix=v('phInvoicePrefix')||'PH-',phDigits=Math.max(1,Math.min(12,Number(v('phInvoiceDigits')||7)));const phCandidate=`${phPrefix}${String(phNext).padStart(phDigits,'0')}`;if(db.transactions.some(t=>t.entity==='pharmacy'&&t.invoiceNo===phCandidate))return alert(`Pharmacy invoice ${phCandidate} already exists. Choose the next unused serial number.`);
   db.pharmacyEntity={...entityCfg('pharmacy'),name:v('phName'),tradeName:v('phTradeName'),address:v('phAddress'),contact:v('phContact'),tin:v('phTin'),branchCode:v('phBranchCode'),taxType:v('phTaxType')||'NON-VAT',vatRate:Math.max(0,Number(v('phVatRate')||12)),invoiceLabel:v('phInvoiceLabel')||'INVOICE',invoicePrefix:phPrefix,invoiceDigits:phDigits,invoiceNextNumber:phNext,permitNo:v('phPermitNo'),permitDate:v('phPermitDate'),min:v('phMin'),machineSerial:v('phMachineSerial'),receiptFooter:v('phFooter')||'Thank you.'};save('Updated separate clinic/lab and pharmacy entity invoice configuration');alert('Entity configurations saved. Verify production values against each entity’s own BIR registration and Permit to Use documents.');
 };
+
+
+function fhirRef(type,id){return `${type}/${id}`}
+function coding(system,code,display){return code?{coding:[{system,code,display}]}:{text:display||''}}
+function fhirPatient(p){return {resourceType:'Patient',id:p.uuid,identifier:[{system:'urn:accu:patient-id',value:p.id},...(p.identifiers||[]).filter(x=>x.value&&x.value!==p.id)],name:[{text:p.name}],gender:p.sex==='M'?'male':p.sex==='F'?'female':'unknown',...(p.dob?{birthDate:p.dob}:{}),...(p.phone?{telecom:[{system:'phone',value:p.phone}]}:{}),...(p.address?{address:[{text:p.address}]}:{})}}
+function fhirOrganization(entity='clinic'){const c=entityCfg(entity);return {resourceType:'Organization',id:c.uuid,identifier:[...(c.tin?[{system:'urn:philippines:bir:tin',value:c.tin+(c.branchCode?`-${c.branchCode}`:'')}]:[])],active:true,name:c.name||entityLabel(entity),alias:c.tradeName&&c.tradeName!==c.name?[c.tradeName]:undefined,telecom:c.contact?[{system:'phone',value:c.contact}]:undefined,address:c.address?[{text:c.address}]:undefined}}
+function fhirPractitioner(pr){return {resourceType:'Practitioner',id:pr.uuid,identifier:[{system:'urn:accu:practitioner-id',value:pr.id},...(pr.licenseNo?[{system:'urn:philippines:professional-license',value:pr.licenseNo}]:[])],active:true,name:[{text:pr.name}]}}
+function fhirEncounter(c){const p=db.patients.find(x=>x.id===c.patientId);const pr=db.practitioners.find(x=>x.id===c.practitionerId)||db.practitioners.find(x=>x.name===c.doctor);return {resourceType:'Encounter',id:c.uuid,status:c.status==='Completed'?'finished':'in-progress',class:{system:'http://terminology.hl7.org/CodeSystem/v3-ActCode',code:'AMB',display:'ambulatory'},subject:p?{reference:fhirRef('Patient',p.uuid),display:p.name}:undefined,participant:pr?[{individual:{reference:fhirRef('Practitioner',pr.uuid),display:pr.name}}]:undefined,period:{start:`${c.date}T08:00:00+08:00`},reasonCode:c.chief?[{text:c.chief}]:undefined,diagnosis:c.assessment?[{condition:{display:c.assessment},use:c.diagnosisCode?coding(c.diagnosisCodeSystem,c.diagnosisCode,c.assessment):undefined}]:undefined}}
+function fhirServiceRequests(o){const p=db.patients.find(x=>x.id===o.patientId);return (o.serviceIds?.length?o.serviceIds.map(id=>db.services.find(s=>s.id===id)).filter(Boolean):(o.tests||[]).map(name=>db.services.find(s=>s.name===name)).filter(Boolean)).map((svc,i)=>({resourceType:'ServiceRequest',id:`${o.uuid}-${i+1}`,status:o.status==='Released'?'completed':'active',intent:'order',code:svc.standardCode?coding(svc.codeSystem||'http://loinc.org',svc.standardCode,svc.name):{text:svc.name},subject:p?{reference:fhirRef('Patient',p.uuid),display:p.name}:undefined,authoredOn:o.date,identifier:[{system:'urn:accu:lab-order',value:o.id}],performer:[{reference:fhirRef('Organization',entityCfg('clinic').uuid),display:entityCfg('clinic').name}] }))}
+function fhirObservations(o){const p=db.patients.find(x=>x.id===o.patientId);return (o.resultComponents||[]).map((r,i)=>{const numeric=r.value!==''&&!Number.isNaN(Number(r.value));const obs={resourceType:'Observation',id:r.uuid||`${o.uuid}-obs-${i+1}`,status:o.status==='Released'?'final':'preliminary',code:r.code?coding(r.codeSystem||'http://loinc.org',r.code,r.name):{text:r.name||`Result ${i+1}`},subject:p?{reference:fhirRef('Patient',p.uuid),display:p.name}:undefined,effectiveDateTime:`${o.date}T08:00:00+08:00`,identifier:[{system:'urn:accu:lab-order',value:o.id}]};if(numeric)obs.valueQuantity={value:Number(r.value),...(r.unit?{unit:r.unit,system:'http://unitsofmeasure.org',code:r.unit}:{} )};else if(r.value)obs.valueString=r.value;if(r.low||r.high)obs.referenceRange=[{...(r.low?{low:{value:Number(r.low),unit:r.unit||undefined}}:{}),...(r.high?{high:{value:Number(r.high),unit:r.unit||undefined}}:{})}];if(r.flag)obs.interpretation=[{text:r.flag}];return obs})}
+function fhirDiagnosticReport(o,obs,srs){const p=db.patients.find(x=>x.id===o.patientId);return {resourceType:'DiagnosticReport',id:o.uuid,status:o.status==='Released'?'final':'partial',code:{text:(o.tests||[]).join(', ')||'Laboratory report'},subject:p?{reference:fhirRef('Patient',p.uuid),display:p.name}:undefined,basedOn:srs.map(x=>({reference:fhirRef('ServiceRequest',x.id)})),effectiveDateTime:`${o.date}T08:00:00+08:00`,result:obs.map(x=>({reference:fhirRef('Observation',x.id)})),conclusion:o.resultNote||undefined}}
+function fhirMedication(m){return {resourceType:'Medication',id:m.uuid,identifier:[{system:'urn:accu:medication-id',value:m.localCode||m.id}],code:m.standardCode?coding(m.standardCodeSystem||'urn:accu:medication-code',m.standardCode,`${m.generic} ${m.strength}`):{text:`${m.generic} ${m.strength}${m.brand?` (${m.brand})`:''}`},form:m.form?{text:m.form}:undefined,batch:{lotNumber:m.batch||undefined,expirationDate:m.expiry||undefined}}}
+function buildPatientBundle(patientId){const p=db.patients.find(x=>x.id===patientId);if(!p)return null;const resources=[fhirPatient(p),fhirOrganization('clinic'),fhirOrganization('pharmacy')];const seen=new Set(resources.map(r=>`${r.resourceType}/${r.id}`));const add=r=>{if(r&&!seen.has(`${r.resourceType}/${r.id}`)){resources.push(r);seen.add(`${r.resourceType}/${r.id}`)}};db.consultations.filter(c=>c.patientId===patientId).forEach(c=>{const pr=db.practitioners.find(x=>x.id===c.practitionerId)||db.practitioners.find(x=>x.name===c.doctor);if(pr)add(fhirPractitioner(pr));add(fhirEncounter(c))});db.labOrders.filter(o=>o.patientId===patientId).forEach(o=>{const srs=fhirServiceRequests(o);srs.forEach(add);const obs=fhirObservations(o);obs.forEach(add);add(fhirDiagnosticReport(o,obs,srs))});const meds=new Set;db.transactions.filter(t=>t.entity==='pharmacy'&&t.patientId===patientId).forEach(t=>(t.items||[]).forEach(item=>{const m=db.inventory.find(x=>x.id===item.ref);if(m&&!meds.has(m.uuid)){add(fhirMedication(m));meds.add(m.uuid)}}));return {resourceType:'Bundle',id:newUuid(),type:'collection',timestamp:new Date().toISOString(),meta:{tag:[{system:'urn:accu:interop',code:'demo',display:'Interoperability preview — not a certified exchange payload'}]},entry:resources.map(resource=>({resource}))}}
+function downloadJson(obj,filename){const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/fhir+json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+let fhirPreviewPatientId='';
+window.previewFhir=function(){const id=document.getElementById('interopPatient')?.value||fhirPreviewPatientId||db.patients[0]?.id;if(!id)return;fhirPreviewPatientId=id;const b=buildPatientBundle(id);document.getElementById('fhirPreview').textContent=JSON.stringify(b,null,2)};
+window.exportFhir=function(){const id=document.getElementById('interopPatient')?.value||fhirPreviewPatientId||db.patients[0]?.id;const b=buildPatientBundle(id);if(b)downloadJson(b,`ACCU-FHIR-${id}.json`)};
+window.saveTerminology=function(){if(!can('interopConfig'))return alert('Administrator access required.');db.services.forEach(x=>{const sys=document.getElementById(`svcSys-${x.id}`),code=document.getElementById(`svcCode-${x.id}`);if(sys)x.codeSystem=sys.value;if(code)x.standardCode=code.value.trim()});db.inventory.forEach(x=>{const sys=document.getElementById(`medSys-${x.id}`),code=document.getElementById(`medCode-${x.id}`);if(sys)x.standardCodeSystem=sys.value;if(code)x.standardCode=code.value.trim()});save('Updated interoperability terminology mappings')};
+function renderInterop(){
+ const root=document.getElementById('interop');if(!root)return;const pCount=db.patients.filter(x=>x.uuid).length;const svcMapped=db.services.filter(x=>x.standardCode).length;const medMapped=db.inventory.filter(x=>x.standardCode).length;const structured=db.labOrders.reduce((a,o)=>a+(o.resultComponents||[]).length,0);const admin=can('interopConfig');const patientId=fhirPreviewPatientId||db.patients[0]?.id||'';
+ const svcRows=db.services.map(x=>`<tr><td data-label="Local code"><span class="code-pill">${esc(x.localCode||x.id)}</span></td><td data-label="Service"><strong>${esc(x.name)}</strong><br><span class="muted">${esc(x.type)}</span></td><td data-label="Code system"><select id="svcSys-${x.id}" class="small-select" ${admin?'':'disabled'}><option value="" ${!x.codeSystem?'selected':''}>Unmapped / local only</option><option value="http://loinc.org" ${x.codeSystem==='http://loinc.org'?'selected':''}>LOINC</option><option value="http://snomed.info/sct" ${x.codeSystem==='http://snomed.info/sct'?'selected':''}>SNOMED CT</option></select></td><td data-label="Standard code"><input id="svcCode-${x.id}" value="${esc(x.standardCode||'')}" placeholder="Validate before entering" ${admin?'':'disabled'}></td></tr>`).join('');
+ const medRows=db.inventory.map(x=>`<tr><td data-label="Local code"><span class="code-pill">${esc(x.localCode||x.id)}</span></td><td data-label="Medicine"><strong>${esc(x.generic)} ${esc(x.strength)}</strong><br><span class="muted">${esc(x.brand||'No brand')} · ${esc(x.form||'')}</span></td><td data-label="Code system"><select id="medSys-${x.id}" class="small-select" ${admin?'':'disabled'}><option value="" ${!x.standardCodeSystem?'selected':''}>Unmapped / local only</option><option value="http://www.nlm.nih.gov/research/umls/rxnorm" ${x.standardCodeSystem?.includes('rxnorm')?'selected':''}>RxNorm</option><option value="urn:accu:medication-code" ${x.standardCodeSystem==='urn:accu:medication-code'?'selected':''}>Local / other</option></select></td><td data-label="Standard code"><input id="medCode-${x.id}" value="${esc(x.standardCode||'')}" placeholder="Validated code" ${admin?'':'disabled'}></td></tr>`).join('');
+ root.innerHTML=`<div class="notice blue"><strong>Interoperability-ready, not interoperability-certified.</strong> This prototype maps internal data to HL7 FHIR R4-style resources and keeps local + standard terminology fields. Philippine Core FHIR alignment should be validated against the current DOH implementation guide before production integration.</div><div class="grid grid-4" style="margin-top:16px">${stat('Stable Patient IDs',`${pCount}/${db.patients.length}`,'UUID + local MRN')}${stat('Mapped Services',`${svcMapped}/${db.services.length}`,'Standard terminology codes')}${stat('Mapped Medicines',`${medMapped}/${db.inventory.length}`,'Medication terminology')}${stat('Structured Results',structured,'Observation-ready components')}</div><div class="interop-grid" style="margin-top:16px"><div class="card entity-card"><div class="section-head"><div><h2>FHIR Patient Bundle Preview</h2><p class="muted">Generates a demo Bundle using current patient, encounter, lab and medication data.</p></div></div><div class="field"><label>Patient</label><select id="interopPatient" onchange="fhirPreviewPatientId=this.value;previewFhir()">${db.patients.map(p=>`<option value="${p.id}" ${patientId===p.id?'selected':''}>${esc(p.name)} · ${p.id}</option>`).join('')}</select></div><div class="fhir-actions" style="margin:12px 0"><button class="primary" onclick="previewFhir()">Generate Preview</button><button class="secondary" onclick="exportFhir()">Export FHIR JSON</button></div><pre id="fhirPreview" class="fhir-preview">Select a patient and generate a preview.</pre></div><div class="card"><h2>Readiness Checklist</h2><div class="readiness-list"><div class="readiness-item"><span>Stable technical identifiers</span><strong class="badge green">Implemented</strong></div><div class="readiness-item"><span>Separate Organizations</span><strong class="badge green">Clinic + Pharmacy</strong></div><div class="readiness-item"><span>Patient / Encounter mapping</span><strong class="badge green">FHIR preview</strong></div><div class="readiness-item"><span>Lab ServiceRequest / DiagnosticReport</span><strong class="badge green">FHIR preview</strong></div><div class="readiness-item"><span>Structured Observation components</span><strong class="badge ${structured?'green':'amber'}">${structured?'Available':'Encode results'}</strong></div><div class="readiness-item"><span>Terminology mapping</span><strong class="badge ${svcMapped||medMapped?'amber':'blue'}">Local + optional standard</strong></div><div class="readiness-item"><span>Authenticated FHIR API</span><strong class="badge amber">Production phase</strong></div><div class="readiness-item"><span>DOH / HIE conformance testing</span><strong class="badge amber">Not yet validated</strong></div></div><div class="notice" style="margin-top:14px">The JSON export is for technical demonstration and mapping review. It is not proof of DOH certification, NHDR integration, or conformance to a production exchange endpoint.</div></div></div><div class="card" style="margin-top:16px"><div class="section-head"><div><h2>Service Terminology Mapping</h2><p class="muted">Keep ACCU's local code while adding a validated standard code. Do not guess LOINC/SNOMED codes.</p></div>${admin?'<button class="primary" onclick="saveTerminology()">Save Mappings</button>':''}</div><div class="table-wrap"><table class="responsive-table"><thead><tr><th>Local code</th><th>Service</th><th>Code system</th><th>Standard code</th></tr></thead><tbody>${svcRows}</tbody></table></div></div><div class="card" style="margin-top:16px"><div class="section-head"><div><h2>Medication Terminology Mapping</h2><p class="muted">Generic and brand names remain local display data; optional standard codes support future exchange.</p></div></div><div class="table-wrap"><table class="responsive-table"><thead><tr><th>Local code</th><th>Medicine</th><th>Code system</th><th>Standard code</th></tr></thead><tbody>${medRows}</tbody></table></div></div>`;setTimeout(()=>{if(canView('interop'))previewFhir()},0)
+}
 
 function patientSelect(id,selected=''){return `<div class="field"><label>Patient</label><select id="${id}">${db.patients.map(p=>`<option value="${p.id}" ${selected===p.id?'selected':''}>${esc(p.name)} (${p.id})</option>`).join('')}</select></div>`}
 function field(label,id,type='text',arg=''){
@@ -710,7 +904,7 @@ function modal(title,body,onSave,saveText='Save',extra=''){
 window.closeModal=()=>document.getElementById('modalRoot').innerHTML='';
 
 function renderAll(){
-  const renderers={dashboard:renderDashboard,patients:renderPatients,consultations:renderConsultations,laboratory:renderLab,pharmacy:renderPharmacy,pos:renderPOS,reports:renderReports,settings:renderSettings};
+  const renderers={dashboard:renderDashboard,patients:renderPatients,consultations:renderConsultations,laboratory:renderLab,pharmacy:renderPharmacy,pos:renderPOS,reports:renderReports,interop:renderInterop,settings:renderSettings};
   Object.entries(renderers).forEach(([view,render])=>{
     const el=document.getElementById(view);
     if(canView(view)) render();
@@ -725,8 +919,62 @@ document.getElementById('quickSaleBtn').onclick=runQuickAction;
 document.getElementById('mobileQuickBtn').onclick=runQuickAction;
 document.getElementById('menuBtn').onclick=openDrawer;
 document.getElementById('drawerBackdrop').onclick=closeDrawer;
-document.getElementById('roleSelect').addEventListener('change',e=>{activeRole=e.target.value;localStorage.setItem(ROLE_KEY,activeRole);cart=[];saleDraft={entity:(activeRole==='Pharmacist'?'pharmacy':'clinic'),patientId:'',payment:'Cash',tendered:'',buyerName:'',buyerTin:'',buyerAddress:'',discountType:'None',discountId:'',discountPercent:'0'};renderAll();updateRoleUI()});
+document.getElementById('roleSelect').addEventListener('change',e=>{if(window.ACCUBackend?.configured){e.target.value=activeRole;return;}activeRole=e.target.value;localStorage.setItem(ROLE_KEY,activeRole);cart=[];saleDraft={entity:(activeRole==='Pharmacist'?'pharmacy':'clinic'),patientId:'',payment:'Cash',tendered:'',buyerName:'',buyerTin:'',buyerAddress:'',discountType:'None',discountId:'',discountPercent:'0'};renderAll();updateRoleUI()});
 document.getElementById('resetDemo').onclick=()=>{if(confirm('Reset all demo data?')){localStorage.removeItem(STORAGE_KEY);db=load();cart=[];saleDraft={entity:(activeRole==='Pharmacist'?'pharmacy':'clinic'),patientId:'',payment:'Cash',tendered:'',buyerName:'',buyerTin:'',buyerAddress:'',discountType:'None',discountId:'',discountPercent:'0'};renderAll();updateRoleUI();showView('dashboard')}};
 
+if(window.ACCUBackend?.configured)document.getElementById('authGate').hidden=false;
 renderAll();
 updateRoleUI();
+
+async function hydrateFromBackend(){
+  const b=window.ACCUBackend; if(!b?.configured){updateBackendBadge('Offline demo');return;}
+  updateBackendBadge('Connecting…');
+  try{
+    const profile=await b.getProfile();
+    if(!profile){document.getElementById('authGate').hidden=false;updateBackendBadge('Sign in required');return;}
+    activeRole=profile.role;
+    localStorage.setItem(ROLE_KEY,activeRole);
+    if(profile.must_change_password){
+      document.getElementById('authGate').hidden=true;
+      document.getElementById('passwordGate').hidden=false;
+      updateBackendBadge('Password change required','error');
+      return;
+    }
+    document.getElementById('passwordGate').hidden=true;
+    const remote=await b.loadWorkspace();
+    if(remote){
+      const hasRemote=(remote.patients?.length||remote.consultations?.length||remote.labOrders?.length||remote.inventory?.length||remote.transactions?.length);
+      if(hasRemote){db={...structuredClone(seed),...remote,clinic:{...structuredClone(seed.clinic),...(remote.clinic||{})},pharmacyEntity:{...structuredClone(seed.pharmacyEntity),...(remote.pharmacyEntity||{})},meta:{...structuredClone(seed.meta),...(remote.meta||{})},audit:db.audit||[]};ensureInteropModel(db);localStorage.setItem(STORAGE_KEY,JSON.stringify(db));}
+      else if(activeRole==='Administrator'){await b.syncWorkspace(db,'Initial backend seed',activeRole)}
+    }
+    const rs=document.getElementById('roleSelect');rs.value=activeRole;rs.disabled=true;rs.previousElementSibling.textContent='Authenticated role';
+    const help=document.querySelector('.role-help');if(help)help.textContent='Role is enforced by Supabase profile + Row Level Security.';
+    const reset=document.getElementById('resetDemo');if(reset)reset.style.display='none';
+    if(!document.getElementById('myPasswordBtn')){const btn=document.createElement('button');btn.id='myPasswordBtn';btn.className='ghost';btn.textContent='Change my password';btn.onclick=openMyPasswordModal;document.querySelector('.sidebar-footer').appendChild(btn)}
+    if(!document.getElementById('signOutBtn')){const btn=document.createElement('button');btn.id='signOutBtn';btn.className='ghost';btn.textContent='Sign out';btn.onclick=async()=>{await b.signOut();location.reload()};document.querySelector('.sidebar-footer').appendChild(btn)}
+    document.getElementById('authGate').hidden=true;renderAll();updateRoleUI();updateBackendBadge('Supabase connected','live');
+  }catch(e){console.error(e);updateBackendBadge('Backend error','error');document.getElementById('authGate').hidden=false;document.getElementById('authError').textContent=e.message||'Unable to connect.'}
+}
+const signInBtn=document.getElementById('authSignIn');
+if(signInBtn)signInBtn.onclick=async()=>{const email=document.getElementById('authEmail').value.trim(),password=document.getElementById('authPassword').value;const err=document.getElementById('authError');err.textContent='';signInBtn.disabled=true;try{await window.ACCUBackend.signIn(email,password);await hydrateFromBackend()}catch(e){err.textContent=e.message||'Sign in failed'}finally{signInBtn.disabled=false}};
+
+const firstLoginPasswordBtn=document.getElementById('changePasswordBtn');
+if(firstLoginPasswordBtn)firstLoginPasswordBtn.onclick=async()=>{
+  const p1=document.getElementById('newPassword').value,p2=document.getElementById('confirmNewPassword').value;
+  const err=document.getElementById('passwordChangeError');err.textContent='';
+  if(p1.length<10)return err.textContent='Use at least 10 characters.';
+  if(p1!==p2)return err.textContent='Passwords do not match.';
+  firstLoginPasswordBtn.disabled=true;firstLoginPasswordBtn.textContent='Updating…';
+  try{
+    await window.ACCUBackend.changeOwnPassword(p1);
+    document.getElementById('newPassword').value='';
+    document.getElementById('confirmNewPassword').value='';
+    document.getElementById('passwordGate').hidden=true;
+    await hydrateFromBackend();
+  }catch(e){err.textContent=e.message||'Unable to change password.'}
+  finally{firstLoginPasswordBtn.disabled=false;firstLoginPasswordBtn.textContent='Set new password'}
+};
+const passwordGateSignOut=document.getElementById('passwordGateSignOut');
+if(passwordGateSignOut)passwordGateSignOut.onclick=async()=>{await window.ACCUBackend.signOut();location.reload()};
+
+hydrateFromBackend();

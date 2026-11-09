@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0b4a82" />
-  <title>ACCU Integrated Clinic System — MVP v6</title>
+  <title>ACCU Integrated Clinic System — MVP v9</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -45,6 +45,7 @@
         <button class="nav-item" data-view="pharmacy"><span class="nav-icon">💊</span><span>Pharmacy</span></button>
         <button class="nav-item" data-view="pos"><span class="nav-icon">▣</span><span>POS / Billing</span></button>
         <button class="nav-item" data-view="reports"><span class="nav-icon">▤</span><span>Reports</span></button>
+        <button class="nav-item" data-view="interop"><span class="nav-icon">⇄</span><span>Interoperability</span></button>
         <button class="nav-item" data-view="settings"><span class="nav-icon">⚙</span><span>Admin</span></button>
       </nav>
 
@@ -71,7 +72,7 @@
           <p id="roleContext" class="role-context"></p>
         </div>
         <div class="top-actions">
-          <span id="todayLabel" class="muted"></span>
+          <span id="backendBadge" class="backend-badge">Offline demo</span><span id="todayLabel" class="muted"></span>
           <button id="quickSaleBtn" class="primary">+ New Transaction</button>
         </div>
       </header>
@@ -83,6 +84,7 @@
       <section id="pharmacy" class="view"></section>
       <section id="pos" class="view"></section>
       <section id="reports" class="view"></section>
+      <section id="interop" class="view"></section>
       <section id="settings" class="view"></section>
     </main>
   </div>
@@ -90,6 +92,33 @@
   <nav id="mobileBottomNav" class="mobile-bottom-nav" aria-label="Mobile navigation"></nav>
 
   <div id="modalRoot"></div>
+  <div id="authGate" class="auth-gate" hidden>
+    <div class="auth-card">
+      <img src="accu-logo.jpeg" alt="ACCU logo" />
+      <h2>ACCU Secure Sign In</h2>
+      <p>Connected to Supabase. Use an authorized clinic account.</p>
+      <label>Email<input id="authEmail" type="email" autocomplete="username"></label>
+      <label>Password<input id="authPassword" type="password" autocomplete="current-password"></label>
+      <button id="authSignIn" class="primary">Sign in</button>
+      <p id="authError" class="auth-error"></p>
+    </div>
+  </div>
+  <div id="passwordGate" class="auth-gate" hidden>
+    <div class="auth-card">
+      <img src="accu-logo.jpeg" alt="ACCU logo" />
+      <h2>Change Your Temporary Password</h2>
+      <p>Your administrator issued a temporary password. Create your own password before accessing clinic data.</p>
+      <label>New password<input id="newPassword" type="password" autocomplete="new-password" minlength="10"></label>
+      <label>Confirm new password<input id="confirmNewPassword" type="password" autocomplete="new-password" minlength="10"></label>
+      <button id="changePasswordBtn" class="primary">Set new password</button>
+      <button id="passwordGateSignOut" class="ghost" type="button">Sign out</button>
+      <p class="muted" style="font-size:12px">Use at least 10 characters. Supabase project password-strength settings may require more.</p>
+      <p id="passwordChangeError" class="auth-error"></p>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="backend.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

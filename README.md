@@ -1,115 +1,100 @@
-# ACCU Integrated Clinic System — MVP v6
+# ACCU Integrated Clinic System — MVP v9
+## Supabase Backend + Staff Accounts + Temporary Passwords
 
-## v6 additions
+This version keeps the v8 Supabase/PostgreSQL backend and adds administrator-managed staff accounts with a forced first-login password change.
 
-- **Searchable medicine catalog** in Pharmacy Inventory and Pharmacy POS. Search covers generic name, brand name, strength, dosage form, batch/lot, and supplier where available.
-- **Generic name and brand name are stored separately** for every medicine batch.
-- **Laboratory → Lab Supplies tab** for reagents, collection materials, consumables, PPE, cleaning supplies, and other laboratory stock. Lab supplies track supplier, lot/batch, unit, expiry, quantity, reorder level, and unit cost.
-- **Lab supply stock movements**: Medical Technologist and Administrator can record usage and stock-in.
-- **Separate Pharmacy entity**: pharmacy inventory and sales are independent from clinic/laboratory services. POS does not allow clinic/lab services and pharmacy medicines on one invoice.
-- **Separate revenue reporting** for Clinic/Laboratory and Pharmacy.
-- **Separate invoice/BIR configuration** for the Pharmacy entity, including its own registered name, TIN, tax status, invoice prefix/sequence, PTU fields, and terminal identifiers.
+## New in v9
+- Admin → Staff User Accounts
+- Create a real Supabase Auth user from the ACCU admin screen
+- Assign one role at account creation:
+  - Administrator
+  - Receptionist
+  - Physician
+  - Medical Technologist
+  - Pharmacist
+  - Cashier
+- Administrator assigns a temporary password
+- Temporary password is sent directly to Supabase Auth; it is **not stored** in `public.profiles`
+- `must_change_password` flag in the staff profile
+- First sign-in is blocked by a full-screen **Change Your Temporary Password** gate
+- User must create a new password before clinic data is loaded
+- Admin can issue a new temporary password later
+- Admin can disable/enable staff accounts
+- Admin can change another user's role
+- Connected users have **Change my password**
+- Existing UI role switch remains only for offline/demo mode
 
-> Because Pharmacy is configured as a separate entity, its invoices, inventory, and sales should remain separate from the clinic/laboratory entity. Confirm the final tax/accounting setup with each entity's accountant/bookkeeper and actual BIR registration before production use.
+## Security design
+The browser uses only the Supabase publishable/anon key.
 
-Browser-based prototype for **ACCU Laboratory and Diagnostic Center**, covering consultation, laboratory/diagnostics, pharmacy inventory, POS/billing, invoicing, reports, and role-based workspaces.
+Administrator user creation and temporary-password reset require Supabase Auth Admin APIs, so they are handled by:
 
-## What is new in v5
+`supabase/functions/manage-staff-user/index.ts`
 
-### BIR-ready invoice structure
-The POS now generates an **Invoice** rather than treating the thermal printout as an ordinary sales receipt. Each new transaction stores:
+The Edge Function uses the Supabase service-role credential only on the server side. Never copy a service-role/secret key into `config.js`, `index.html`, or browser JavaScript.
 
-- a separate internal transaction reference
-- a configurable, sequential invoice serial number
-- invoice type/label (Invoice, Sales Invoice, Cash Invoice, or Service Invoice)
-- transaction date/time
-- buyer/patient name
-- optional buyer TIN and billing/business address
-- item description, quantity, unit price, and line amount
-- discount type, rate, ID/reference, and amount
-- VAT / Non-VAT tax breakdown fields
-- payment method, amount tendered, and change
-- cashier/processing role
-- original invoice number preserved on reprints
+The function checks that the caller:
+1. has a valid authenticated session;
+2. has an active profile; and
+3. has the `Administrator` role.
 
-If required clinic/BIR configuration fields are still missing, printed invoices are visibly marked:
+Database Row Level Security remains enabled. While `must_change_password = true`, `current_app_role()` returns no operational role, so RLS blocks clinic/pharmacy/lab data even if someone tries to bypass the password-change screen.
 
-**DEMO — NOT FOR BIR PRODUCTION USE**
+---
 
-This prevents the prototype from accidentally looking like an already-authorized BIR production invoice.
+# Setup — New Supabase Project
 
-### BIR / taxpayer configuration
-Administrator → **Admin** now includes configurable fields for:
+## 1. Create the database
+Create a Supabase project, open **SQL Editor**, and run:
 
-- registered taxpayer name
-- trade name
-- registered business address
-- contact information
-- TIN
-- branch code
-- VAT / NON-VAT status
-- VAT rate
-- invoice label
-- invoice prefix, number of digits, and next serial number
-- Permit to Use (PTU) number and date
-- MIN / machine identification number, when applicable
-- terminal/machine serial number, when applicable
-- invoice footer
+`supabase/schema.sql`
 
-Only enter data from ACCU's actual registration and authorization documents. Do not invent values for demo purposes if the output may be mistaken for a production invoice.
+## 2. Create the bootstrap Administrator
+In **Authentication → Users**, create the first ACCU account.
 
-### Tax classification matrix
-Each service and medicine batch can be classified as:
+Copy its user UUID.
 
-- Unclassified
-- VATable
-- VAT-exempt
-- Zero-rated
-- Non-VAT
+Open:
 
-When the clinic is configured as **VAT**, checkout is blocked if a billed item is still Unclassified. This forces the tax treatment to be reviewed first.
+`supabase/first-admin.sql`
 
-The software deliberately does **not** decide the legal tax classification of medical services, professional services, laboratory services, or medicines. ACCU's accountant/bookkeeper should validate those classifications before production use.
+Replace `YOUR_USER_UUID`, then run it in SQL Editor.
 
-### Senior Citizen / PWD / custom discounts
-The POS now records:
+This initial bootstrap administrator is marked as already initialized.
 
-- discount type
-- SC/PWD/reference ID
-- discount percentage
-- calculated discount amount
+## 3. Configure the frontend
+Copy your Project URL and browser-safe publishable/anon key into `config.js`:
 
-Senior Citizen and PWD selections default to 20% as a convenience, but the percentage remains editable. Selecting a discount does **not** automatically change the VAT classification of the items. Eligibility and tax treatment must be validated by the clinic.
+```js
+window.ACCU_CONFIG = {
+  SUPABASE_URL: 'https://YOUR_PROJECT.supabase.co',
+  SUPABASE_ANON_KEY: 'YOUR_PUBLISHABLE_KEY'
+};
+```
 
-### Supplementary Payment Receipt
-The transaction ledger can optionally generate a separate **Payment Receipt** linked to the original Invoice. It has its own configurable serial series and is marked as a **SUPPLEMENTARY DOCUMENT**.
+Never use the service-role key here.
 
-Use this only when appropriate under ACCU's actual accounting/BIR setup. It does not replace the principal Invoice. Reprints preserve the same Payment Receipt number.
+## 4. Deploy the staff-account Edge Function
 
-### Structured invoice export
-Administrator → Reports now has:
+The function is already included at:
 
-- **Export CSV**
-- **Structured JSON**
+`supabase/functions/manage-staff-user/index.ts`
 
-The JSON export contains seller, buyer, line items, tax classes, discounts, tax breakdowns, payment details, invoice number, and internal reference. It is intended as an interoperability/future-integration format only.
+Using the Supabase CLI:
 
-It is **not** a BIR EIS-certified payload, is not transmitted to BIR, and does not constitute a Permit to Transmit.
+```bash
+supabase login
+supabase link --project-ref YOUR_PROJECT_REF
+supabase functions deploy manage-staff-user --use-api
+```
 
-## Existing MVP modules
+You can also deploy Edge Functions through supported Supabase Dashboard workflows.
 
-- Patient registry
-- Consultation queue and physician encounter workflow
-- Laboratory / diagnostic ordering and status workflow
-- Pharmacy inventory with batch, expiry, and low-stock monitoring
-- Unified POS / billing
-- 80 mm thermal invoice printing
-- Role-based workspaces for Administrator, Receptionist, Physician, Medical Technologist, Pharmacist, and Cashier
-- Transaction ledger, reports, structured export, and audit log
+The hosted Supabase Edge Function environment provides the project URL and secret/service-role credentials server-side. Do not expose them to the browser.
 
-## Running the MVP
+## 5. Serve the application
 
-You can open `index.html` directly in a modern browser, or serve the folder locally:
+For local testing:
 
 ```bash
 python -m http.server 8000
@@ -119,44 +104,135 @@ Then open:
 
 `http://localhost:8000`
 
-## 80 mm thermal printer setup
+---
 
-1. Connect the thermal printer to the cashier computer through USB, LAN, or another supported connection.
-2. Install the manufacturer's printer driver so the printer appears in the operating system.
-3. Select an **80 mm / receipt roll** paper size in the printer driver when available.
-4. Complete a transaction and select **Print 80mm Invoice**.
-5. Choose the installed thermal printer in the browser print dialog.
-6. Use 80 mm paper, no/minimum margins, 100% scale, and disable browser headers/footers.
+# Upgrade — Existing ACCU v8 Supabase Project
 
-The MVP intentionally uses the normal browser print dialog. Direct ESC/POS printing, automatic cutter commands, and cash-drawer control can be added later through a local print bridge or dedicated desktop POS client.
+You do **not** need to delete your v8 database.
 
-## Important BIR deployment note
+1. Back up your project first.
+2. Run:
 
-This prototype is designed to help ACCU prepare the data and invoice workflow, but **software format alone does not make a POS BIR-authorized**.
+`supabase/upgrade-v8-to-v9.sql`
 
-Before real deployment, ACCU and the software developer should confirm the requirements that apply to the clinic and system with the clinic's accountant/bookkeeper and BIR/RDO. Relevant current issuances include:
+3. Deploy:
 
-- **RR No. 7-2024** — EOPT registration and invoicing requirements
-- **RMC No. 77-2024** — clarifications and sample invoice/supplementary document formats
-- **RMO No. 24-2023** — accreditation of CRM/POS and similar sales software
-- **RMC No. 72-2025** — current guidance on CRM/POS software accreditation/PTU validity
-- **RR No. 11-2025** — electronic invoicing and sales-reporting requirements for covered taxpayers/systems
+```bash
+supabase functions deploy manage-staff-user --use-api
+```
 
-BIR rules and electronic-invoicing implementation can change. Check the current BIR website/advisories before production rollout.
+4. Replace the old frontend files with the v9 files.
+5. Keep your existing `config.js` credentials.
 
-## Security / production limitation
+The upgrade script adds:
+- `profiles.email`
+- `profiles.must_change_password`
+- `profiles.password_changed_at`
+- `profiles.created_by`
+- `complete_first_login_password_change()` RPC
 
-This is still an MVP. Data are stored in browser `localStorage`.
+Existing v8 accounts are marked as already initialized so they are not unexpectedly locked out.
 
-Do **not** use this build as the production repository for real patient health information or the clinic's official accounting records. A production version should move at least the following to a secured backend/database:
+---
 
-- real user authentication
-- server-enforced role permissions
-- patient and clinical records
-- invoice and billing records
-- immutable/auditable serial numbering
-- audit logs
-- backups and disaster recovery
-- encryption and access control
-- printer/terminal registration
-- BIR-authorized configuration and any required electronic reporting integration
+# Staff Account Workflow
+
+## Administrator
+Open:
+
+**Admin → Staff User Accounts → Create Staff Account**
+
+Enter:
+- full name
+- email
+- role
+- temporary password
+
+Give the temporary password to the staff member privately.
+
+The interface intentionally does not display the temporary password again after creation.
+
+## Staff member
+1. Sign in using email + temporary password.
+2. ACCU displays **Change Your Temporary Password**.
+3. Clinic modules remain blocked.
+4. Enter and confirm a new password.
+5. Supabase Auth changes the password.
+6. ACCU clears `must_change_password`.
+7. The user's role-specific workspace opens.
+
+The application requires at least 10 characters in this MVP. Your Supabase project's password-strength policy may require stronger rules.
+
+## Password reset by administrator
+The administrator can click:
+
+**Temp password**
+
+for a staff account.
+
+A new temporary password replaces the old password and the account is flagged to change it on the next sign-in.
+
+---
+
+# Account Status and Roles
+
+`profiles.active = false` disables database access through the role function and the application rejects the staff account during sign-in.
+
+Roles remain database-controlled. In connected mode, the demo role selector is disabled.
+
+Role access remains:
+- **Administrator** — full operations/configuration
+- **Receptionist** — patients + consultation/lab requests
+- **Physician** — clinical encounters + requests/results view
+- **Medical Technologist** — laboratory/results/lab supplies
+- **Pharmacist** — medicines + pharmacy transactions
+- **Cashier** — POS/billing/transactions
+
+---
+
+# Existing v8/v7 Capabilities Retained
+- patient registry
+- consultations
+- diagnostics/laboratory
+- structured lab results
+- lab supplies inventory
+- pharmacy medicines with generic + brand search
+- separate Clinic/Lab and Pharmacy entities
+- BIR-ready invoice configuration prototype
+- 80 mm receipt/invoice printing
+- sales reporting
+- FHIR R4-style interoperability preview/export
+- Supabase PostgreSQL tables
+- Supabase Auth
+- Row Level Security
+- audit table
+
+---
+
+# Important Production Notes
+
+v9 is a backend-connected MVP, not yet a final production clinic information system.
+
+Before live clinical/financial use, complete:
+- record-level backend CRUD instead of whole-workspace synchronization;
+- database transactions for checkout and invoice serial allocation;
+- conflict/version handling;
+- tested backup + restore;
+- HTTPS deployment;
+- session/device controls and MFA if required;
+- privacy and security review under applicable Philippine requirements;
+- production audit retention;
+- secure document/result-file storage;
+- FHIR/PH Core conformance validation before real external exchange;
+- BIR registration/authorization and accountant validation before treating generated invoices as production BIR invoices.
+
+## Files
+- `index.html` — application shell and login/password gates
+- `style.css` — responsive ACCU theme
+- `app.js` — clinic UI + staff account UI
+- `backend.js` — Supabase browser adapter
+- `config.js` — local project URL + publishable key
+- `supabase/schema.sql` — full schema for new installations
+- `supabase/upgrade-v8-to-v9.sql` — migration for existing v8 installations
+- `supabase/first-admin.sql` — bootstrap first administrator
+- `supabase/functions/manage-staff-user/index.ts` — secure server-side staff provisioning/password reset
