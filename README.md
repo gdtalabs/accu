@@ -1,86 +1,115 @@
-# ACCU Integrated Clinic System — MVP v9
-## Supabase Backend + Staff Accounts + Temporary Passwords
+# ACCU Integrated Clinic System
 
-This version keeps the v8 Supabase/PostgreSQL backend and adds administrator-managed staff accounts with a forced first-login password change.
+A responsive, role-based clinic operations system for **ACCU Laboratory and Diagnostic Center**, with separate clinic/laboratory and pharmacy workflows.
 
-## New in v9
-- Admin → Staff User Accounts
-- Create a real Supabase Auth user from the ACCU admin screen
-- Assign one role at account creation:
-  - Administrator
-  - Receptionist
-  - Physician
-  - Medical Technologist
-  - Pharmacist
-  - Cashier
-- Administrator assigns a temporary password
-- Temporary password is sent directly to Supabase Auth; it is **not stored** in `public.profiles`
-- `must_change_password` flag in the staff profile
-- First sign-in is blocked by a full-screen **Change Your Temporary Password** gate
-- User must create a new password before clinic data is loaded
-- Admin can issue a new temporary password later
-- Admin can disable/enable staff accounts
-- Admin can change another user's role
-- Connected users have **Change my password**
-- Existing UI role switch remains only for offline/demo mode
+## Included modules
 
-## Security design
-The browser uses only the Supabase publishable/anon key.
+- Secure staff sign-in with Supabase Auth
+- Forced temporary-password change on first login
+- Role-based navigation and PostgreSQL Row Level Security (RLS)
+- Patient registry
+- Consultation queue and physician encounters
+- Laboratory orders, structured results, and laboratory supplies
+- Radiology orders, imaging workflow, and radiologist reports
+- Pharmacy medicine inventory with generic + brand search
+- Pharmacy returns and inventory adjustments
+- Separate Clinic/Lab and Pharmacy billing entities
+- POS / billing with 80 mm thermal invoice printing
+- Invoice, payment-receipt, tax, and BIR configuration fields
+- Revenue and transaction reports
+- Staff account administration and audit logs
+- Interoperability workspace with FHIR R4-style preview/export and terminology mapping
+- Responsive layouts for phone, tablet, laptop, and desktop
 
-Administrator user creation and temporary-password reset require Supabase Auth Admin APIs, so they are handled by:
+## Roles
 
-`supabase/functions/manage-staff-user/index.ts`
+| Role | Main access |
+|---|---|
+| Administrator | Full system administration, settings, reports, staff accounts, catalog management |
+| Receptionist | Patient registration, consultation queue, laboratory and radiology requests |
+| Physician | Patient records, consultations, laboratory and radiology review/request workflows |
+| Medical Technologist | Laboratory worklist, structured results, lab supplies |
+| Radiologic Technologist | Radiology worklist and imaging-status workflow |
+| Radiologist | Radiology worklist, findings, impression, and final report |
+| Pharmacist | Medicine inventory, pharmacy POS, pharmacy returns |
+| Cashier | Clinic/Lab and Pharmacy billing, invoice/payment records, transaction reports |
 
-The Edge Function uses the Supabase service-role credential only on the server side. Never copy a service-role/secret key into `config.js`, `index.html`, or browser JavaScript.
+## Login-first workflow
 
-The function checks that the caller:
-1. has a valid authenticated session;
-2. has an active profile; and
-3. has the `Administrator` role.
+The application does not expose the clinical workspace before authentication. A configured installation opens on the ACCU sign-in page.
 
-Database Row Level Security remains enabled. While `must_change_password = true`, `current_app_role()` returns no operational role, so RLS blocks clinic/pharmacy/lab data even if someone tries to bypass the password-change screen.
+For staff onboarding:
 
----
+1. Administrator creates a staff account.
+2. Administrator assigns the staff role and a temporary password.
+3. Staff signs in using that temporary password.
+4. The system requires the staff member to set a new password before clinical data can be accessed.
+5. While `must_change_password = true`, the database role function returns no operational application role, so RLS blocks access even if the user attempts to bypass the screen.
 
-# Setup — New Supabase Project
+Temporary and final passwords are handled by Supabase Auth. They are **not stored in `profiles`**.
 
-## 1. Create the database
-Create a Supabase project, open **SQL Editor**, and run:
+## Fresh installation
 
-`supabase/schema.sql`
+### 1. Create a Supabase project
 
-## 2. Create the bootstrap Administrator
-In **Authentication → Users**, create the first ACCU account.
+Create a project at Supabase and keep the following available:
 
-Copy its user UUID.
+- Project URL
+- Publishable/anon key
+- Project reference ID
+
+**Never put the service-role key in the browser application.**
+
+### 2. Create the database
+
+Open Supabase **SQL Editor** and run:
+
+```text
+supabase/schema.sql
+```
+
+This creates the application tables, helper functions, profiles, RLS policies, and grants.
+
+### 3. Create the first administrator
+
+In Supabase Dashboard:
+
+**Authentication → Users → Add user**
+
+Create the first ACCU administrator account. Copy its user UUID.
 
 Open:
 
-`supabase/first-admin.sql`
+```text
+supabase/first-admin.sql
+```
 
-Replace `YOUR_USER_UUID`, then run it in SQL Editor.
+Replace:
 
-This initial bootstrap administrator is marked as already initialized.
+```text
+YOUR_USER_UUID
+```
 
-## 3. Configure the frontend
-Copy your Project URL and browser-safe publishable/anon key into `config.js`:
+with the new user's UUID, then run the SQL.
 
-```js
+### 4. Configure the browser app
+
+Edit `config.js`:
+
+```javascript
 window.ACCU_CONFIG = {
   SUPABASE_URL: 'https://YOUR_PROJECT.supabase.co',
-  SUPABASE_ANON_KEY: 'YOUR_PUBLISHABLE_KEY'
+  SUPABASE_ANON_KEY: 'YOUR_PUBLISHABLE_OR_ANON_KEY'
 };
 ```
 
-Never use the service-role key here.
+Do not use `SUPABASE_SERVICE_ROLE_KEY` here.
 
-## 4. Deploy the staff-account Edge Function
+### 5. Deploy the staff-account Edge Function
 
-The function is already included at:
+The administrator's **Create Staff Account** and **Issue Temporary Password** actions use a server-side Edge Function because Supabase Admin Auth methods require privileged credentials.
 
-`supabase/functions/manage-staff-user/index.ts`
-
-Using the Supabase CLI:
+From a machine with the Supabase CLI:
 
 ```bash
 supabase login
@@ -88,13 +117,17 @@ supabase link --project-ref YOUR_PROJECT_REF
 supabase functions deploy manage-staff-user --use-api
 ```
 
-You can also deploy Edge Functions through supported Supabase Dashboard workflows.
+Function source:
 
-The hosted Supabase Edge Function environment provides the project URL and secret/service-role credentials server-side. Do not expose them to the browser.
+```text
+supabase/functions/manage-staff-user/index.ts
+```
 
-## 5. Serve the application
+Supabase provides `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to hosted Edge Functions. Do not copy the service-role key into `config.js` or other frontend files.
 
-For local testing:
+### 6. Serve the application
+
+Use HTTPS on the deployed clinic domain. For local setup/testing, serve the folder over HTTP instead of opening `index.html` directly:
 
 ```bash
 python -m http.server 8000
@@ -102,137 +135,171 @@ python -m http.server 8000
 
 Then open:
 
-`http://localhost:8000`
-
----
-
-# Upgrade — Existing ACCU v8 Supabase Project
-
-You do **not** need to delete your v8 database.
-
-1. Back up your project first.
-2. Run:
-
-`supabase/upgrade-v8-to-v9.sql`
-
-3. Deploy:
-
-```bash
-supabase functions deploy manage-staff-user --use-api
+```text
+http://localhost:8000
 ```
 
-4. Replace the old frontend files with the v9 files.
-5. Keep your existing `config.js` credentials.
+The first page is the ACCU account login.
 
-The upgrade script adds:
-- `profiles.email`
-- `profiles.must_change_password`
-- `profiles.password_changed_at`
-- `profiles.created_by`
-- `complete_first_login_password_change()` RPC
+## Upgrade from the previous v9 backend build
 
-Existing v8 accounts are marked as already initialized so they are not unexpectedly locked out.
+If the v9 Supabase database is already installed, do **not** rerun the full schema over live data. Run:
 
----
+```text
+supabase/upgrade-v9-to-final.sql
+```
 
-# Staff Account Workflow
+This adds:
 
-## Administrator
-Open:
+- `Radiologic Technologist` and `Radiologist` roles
+- Radiology orders and RLS policies
+- Pharmacy returns and RLS policies
+- Updated patient/practitioner visibility for radiology staff
+- Updated transaction permissions needed for cashier/pharmacy workflows
 
-**Admin → Staff User Accounts → Create Staff Account**
+Then deploy the latest `manage-staff-user` Edge Function.
 
-Enter:
-- full name
-- email
-- role
-- temporary password
+## Radiology workflow
 
-Give the temporary password to the staff member privately.
+Typical flow:
 
-The interface intentionally does not display the temporary password again after creation.
+```text
+Receptionist / Physician request
+      ↓
+Ordered
+      ↓
+Scheduled
+      ↓
+For Imaging
+      ↓
+Performed
+      ↓
+For Reading
+      ↓
+Radiologist enters Findings + Impression
+      ↓
+Final
+```
 
-## Staff member
-1. Sign in using email + temporary password.
-2. ACCU displays **Change Your Temporary Password**.
-3. Clinic modules remain blocked.
-4. Enter and confirm a new password.
-5. Supabase Auth changes the password.
-6. ACCU clears `must_change_password`.
-7. The user's role-specific workspace opens.
+Radiologic Technologists can manage acquisition/worklist status. Radiologists can author/finalize the diagnostic report. Physicians and authorized staff can review finalized reports according to role permissions.
 
-The application requires at least 10 characters in this MVP. Your Supabase project's password-strength policy may require stronger rules.
+Radiology services are maintained in **Admin → Service Catalog** using `Radiology` as the service type.
 
-## Password reset by administrator
-The administrator can click:
+## Pharmacy returns
 
-**Temp password**
+**Pharmacy → Returns & Adjustments** supports returns linked to the original pharmacy transaction/invoice.
 
-for a staff account.
+Each return records:
 
-A new temporary password replaces the old password and the account is flagged to change it on the next sign-in.
+- Original transaction/invoice
+- Medicine line and quantity
+- Return reason and notes
+- Financial action: Refund / Store Credit / No Refund
+- Financial adjustment amount
+- Inventory disposition
+  - Quarantine / Do Not Restock
+  - Restock to Saleable Inventory
+  - Dispose / Damaged
+- User and timestamp
 
----
+Stock is restored only when the return is explicitly marked **Restock to Saleable Inventory**. The original transaction is marked with its return status, and reports account for refund/store-credit adjustments.
 
-# Account Status and Roles
+A return record is an internal operational record. ACCU's accountant should define the required tax/accounting document and reversal process for actual returns, refunds, and adjustments.
 
-`profiles.active = false` disables database access through the role function and the application rejects the staff account during sign-in.
+## Clinic/Lab and Pharmacy separation
 
-Roles remain database-controlled. In connected mode, the demo role selector is disabled.
+The application treats the pharmacy as a separate billing entity from the clinic/laboratory side. They have separate:
 
-Role access remains:
-- **Administrator** — full operations/configuration
-- **Receptionist** — patients + consultation/lab requests
-- **Physician** — clinical encounters + requests/results view
-- **Medical Technologist** — laboratory/results/lab supplies
-- **Pharmacist** — medicines + pharmacy transactions
-- **Cashier** — POS/billing/transactions
+- Inventory domain
+- Invoice configuration
+- Invoice sequence
+- Tax settings
+- Revenue reporting
 
----
+The POS prevents a single cart from mixing Clinic/Lab services and Pharmacy items.
 
-# Existing v8/v7 Capabilities Retained
-- patient registry
-- consultations
-- diagnostics/laboratory
-- structured lab results
-- lab supplies inventory
-- pharmacy medicines with generic + brand search
-- separate Clinic/Lab and Pharmacy entities
-- BIR-ready invoice configuration prototype
-- 80 mm receipt/invoice printing
-- sales reporting
-- FHIR R4-style interoperability preview/export
-- Supabase PostgreSQL tables
-- Supabase Auth
-- Row Level Security
-- audit table
+## Invoice and thermal printing
 
----
+The system includes an 80 mm print layout and supports:
 
-# Important Production Notes
+- Invoice number and internal transaction reference
+- Buyer/patient information
+- Itemized services/medicines
+- Discounts
+- VAT/Non-VAT breakdown configuration
+- Amount tendered and change
+- Cashier/operator
+- Reprint marking
+- Supplementary payment receipt series
 
-v9 is a backend-connected MVP, not yet a final production clinic information system.
+Printing uses the browser print dialog. Install the thermal printer driver on the cashier workstation and configure 80 mm paper, minimal/no margins, and disabled browser headers/footers.
 
-Before live clinical/financial use, complete:
-- record-level backend CRUD instead of whole-workspace synchronization;
-- database transactions for checkout and invoice serial allocation;
-- conflict/version handling;
-- tested backup + restore;
-- HTTPS deployment;
-- session/device controls and MFA if required;
-- privacy and security review under applicable Philippine requirements;
-- production audit retention;
-- secure document/result-file storage;
-- FHIR/PH Core conformance validation before real external exchange;
-- BIR registration/authorization and accountant validation before treating generated invoices as production BIR invoices.
+BIR-related fields and document formatting do **not** by themselves constitute BIR approval, accreditation, Permit to Use, or EIS certification. Before go-live, the clinic/accountant should validate the registered taxpayer details, tax classifications, invoice series, discounts, returns, and the applicable BIR registration/authorization requirements.
 
-## Files
-- `index.html` — application shell and login/password gates
-- `style.css` — responsive ACCU theme
-- `app.js` — clinic UI + staff account UI
-- `backend.js` — Supabase browser adapter
-- `config.js` — local project URL + publishable key
-- `supabase/schema.sql` — full schema for new installations
-- `supabase/upgrade-v8-to-v9.sql` — migration for existing v8 installations
-- `supabase/first-admin.sql` — bootstrap first administrator
-- `supabase/functions/manage-staff-user/index.ts` — secure server-side staff provisioning/password reset
+## Interoperability
+
+The system retains local codes while allowing validated standard-code mappings. The interoperability workspace can generate FHIR R4-style resources/Bundle previews from available data such as:
+
+- `Organization`
+- `Patient`
+- `Practitioner`
+- `Encounter`
+- `ServiceRequest`
+- `Observation`
+- `DiagnosticReport`
+- `Medication`
+
+Laboratory result components support structured analyte/value/unit/reference-range/flag fields. Radiology final reports are included in the patient interoperability preview.
+
+This is **interoperability-ready architecture**, not a claim of DOH, NHDR, HIE, or FHIR conformance certification. Validate profiles, terminology, identifiers, consent/security requirements, and exchange endpoints before connecting to an external health information system.
+
+## Data and security model
+
+In connected mode:
+
+- Clinical data is stored in Supabase/PostgreSQL.
+- The signed-in role comes from `profiles`.
+- RLS performs server-side authorization.
+- The service-role key is not exposed to the browser.
+- Clinical workspace data is not persisted to browser `localStorage`.
+- Staff-account creation/reset is performed server-side.
+- Audit entries are written for application actions where configured.
+
+Before real clinical deployment, complete at minimum:
+
+- Privacy/data-protection review
+- Access review and least-privilege testing
+- Backup and restore testing
+- Concurrent-user and invoice-sequence testing
+- Device/browser hardening
+- HTTPS/domain deployment
+- Supabase project security review, MFA policy where appropriate, and password policy
+- Disaster-recovery procedure
+- Retention/deletion policy
+- BIR/accounting validation
+- Clinical workflow/user-acceptance testing
+- Validation of radiology/laboratory report release policies
+
+## Key files
+
+```text
+index.html
+style.css
+app.js
+backend.js
+config.js
+config.example.js
+accu-logo.jpeg
+supabase/
+  schema.sql
+  first-admin.sql
+  upgrade-v8-to-v9.sql
+  upgrade-v9-to-final.sql
+  functions/
+    manage-staff-user/
+      index.ts
+```
+
+## Deployment note
+
+This package is the polished ACCU application build requested for client presentation and implementation. A healthcare information system still requires environment-specific configuration, security review, legal/regulatory validation, testing, and deployment controls before it should become the clinic's system of record.
