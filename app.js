@@ -144,6 +144,48 @@ const ROLE_CONFIG = {
   }
 };
 
+const COMM_DEPARTMENTS=['Reception','Consultation','Laboratory','Radiology','Pharmacy','Cashier'];
+let communications={notifications:[],reads:[],messages:[]};
+let communicationTab='notifications';
+
+function communicationReadMap(){return new Map((communications.reads||[]).map(r=>[r.notification_id,r]))}
+function unreadNotifications(){const m=communicationReadMap();return (communications.notifications||[]).filter(n=>!m.has(n.id))}
+function updateCommunicationBadge(){
+  const bell=document.getElementById('communicationBell'),badge=document.getElementById('notificationBadge');
+  if(!bell||!badge)return;
+  const count=unreadNotifications().length;
+  badge.textContent=count>99?'99+':String(count);badge.hidden=count===0;
+  bell.classList.toggle('has-unread',count>0);
+}
+async function refreshCommunications({quiet=false}={}){
+  if(!window.ACCUBackend?.configured||!window.ACCUBackend.status.user)return;
+  try{communications=await window.ACCUBackend.loadCommunications();updateCommunicationBadge();if(!quiet&&document.getElementById('communicationsPanel'))openCommunications(communicationTab)}catch(e){console.warn('Communications refresh failed',e)}
+}
+function notificationIcon(n){return n.severity==='warning'?'⚠️':n.severity==='success'?'✅':n.type==='department_message'?'💬':'🔔'}
+function communicationContextLabel(n){return [n.entity_type,n.entity_local_id].filter(Boolean).join(' · ')}
+window.openCommunications=function(tab='notifications'){
+  communicationTab=tab;
+  const readMap=communicationReadMap();
+  const notifications=(communications.notifications||[]);
+  const messages=(communications.messages||[]);
+  let body='';
+  if(tab==='notifications'){
+    body=`<div class="communication-toolbar"><div><strong>${unreadNotifications().length} unread</strong><span class="muted"> · ${notifications.length} recent alerts</span></div>${notifications.length?'<button class="small-btn" onclick="markAllCommunicationRead()">Mark all read</button>':''}</div><div class="communication-list">${notifications.map(n=>{const r=readMap.get(n.id),unread=!r,ctx=communicationContextLabel(n);return `<article class="communication-item ${unread?'unread':''}"><div class="communication-icon">${notificationIcon(n)}</div><div class="communication-copy"><div class="communication-meta"><span class="badge blue">${esc(n.department)}</span><span>${new Date(n.created_at).toLocaleString('en-PH')}</span></div><strong>${esc(n.title)}</strong><p>${esc(n.message||'')}</p>${ctx?`<small class="muted">${esc(ctx)}</small>`:''}<div class="inline-actions" style="margin-top:8px">${unread?`<button class="small-btn" onclick="markCommunicationRead('${n.id}',${n.requires_ack?'true':'false'})">${n.requires_ack?'Acknowledge':'Mark read'}</button>`:''}${n.entity_type?`<button class="small-btn" onclick="openCommunicationContext('${n.id}')">Open</button>`:''}</div></div></article>`}).join('')||'<div class="empty">No notifications yet.</div>'}</div>`;
+  }else if(tab==='inbox'){
+    body=`<div class="communication-list">${messages.map(m=>`<article class="communication-item"><div class="communication-icon">💬</div><div class="communication-copy"><div class="communication-meta"><span class="badge green">To ${esc(m.target_department)}</span><span>${new Date(m.created_at).toLocaleString('en-PH')}</span></div><strong>${esc(m.subject||'Internal message')}</strong><p>${esc(m.body)}</p><small class="muted">From ${esc(m.sender_role||'Staff')}${m.context_local_id?` · ${esc(m.context_type||'Reference')} ${esc(m.context_local_id)}`:''}</small><div class="inline-actions" style="margin-top:8px"><button class="small-btn" onclick="replyDepartmentMessage('${m.id}')">Reply</button></div></div></article>`).join('')||'<div class="empty">No department messages yet.</div>'}</div>`;
+  }else{
+    body=`<div class="form-grid"><div class="field"><label>Send to department</label><select id="msgDepartment">${COMM_DEPARTMENTS.map(d=>`<option>${d}</option>`).join('')}</select></div><div class="field"><label>Reference type</label><select id="msgContextType"><option value="">None</option><option>Patient</option><option>Consultation</option><option>Laboratory Order</option><option>Radiology Order</option><option>Online Order</option><option>Transaction</option></select></div><div class="field full"><label>Reference ID (optional)</label><input id="msgContextId" placeholder="e.g. P-0007, LAB-0012, WEB-0004"></div><div class="field full"><label>Subject</label><input id="msgSubject" maxlength="120" placeholder="Short operational subject"></div><div class="field full"><label>Message</label><textarea id="msgBody" maxlength="1500" placeholder="Write a short internal message. Avoid unnecessary sensitive details."></textarea></div></div><div class="notice blue" style="margin-top:12px">This is an internal operational inbox. Messages are visible only to authorized staff in the receiving department and administrators.</div><div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="primary" onclick="sendCommunicationMessage()">Send Message</button></div>`;
+  }
+  const tabs=`<div class="subtabs"><button class="subtab ${tab==='notifications'?'active':''}" onclick="openCommunications('notifications')">Notifications</button><button class="subtab ${tab==='inbox'?'active':''}" onclick="openCommunications('inbox')">Department Inbox</button><button class="subtab ${tab==='compose'?'active':''}" onclick="openCommunications('compose')">Send Message</button></div>`;
+  modal('Notifications & Department Inbox',`<div id="communicationsPanel">${tabs}${body}</div>`,null,'Close');
+};
+window.markCommunicationRead=async function(id,ack=false){try{await window.ACCUBackend.markNotificationRead(id,ack);await refreshCommunications({quiet:true});openCommunications('notifications')}catch(e){alert(e.message||'Unable to update notification.')}};
+window.markAllCommunicationRead=async function(){try{await window.ACCUBackend.markAllNotificationsRead(unreadNotifications().map(n=>n.id));await refreshCommunications({quiet:true});openCommunications('notifications')}catch(e){alert(e.message||'Unable to mark notifications read.')}};
+window.openCommunicationContext=async function(id){const n=(communications.notifications||[]).find(x=>x.id===id);if(!n)return;try{await window.ACCUBackend.markNotificationRead(id,false)}catch{}closeModal();await refreshCommunications({quiet:true});const type=n.entity_type||'';if(type==='online_order'){pharmacyActiveTab='online';showView('pharmacy');renderPharmacy()}else if(type==='lab_order')showView('laboratory');else if(type==='radiology_order')showView('radiology');else if(type==='encounter')showView('consultations');else if(type==='transaction')showView('reports');};
+window.sendCommunicationMessage=async function(){const targetDepartment=v('msgDepartment'),subject=v('msgSubject'),body=v('msgBody'),contextType=v('msgContextType'),contextLocalId=v('msgContextId');if(!body)return alert('Message is required.');try{await window.ACCUBackend.sendDepartmentMessage({targetDepartment,subject,body,contextType,contextLocalId});await refreshCommunications({quiet:true});openCommunications('inbox')}catch(e){alert(e.message||'Unable to send message.')}};
+window.replyDepartmentMessage=function(id){const m=(communications.messages||[]).find(x=>x.id===id);openCommunications('compose');setTimeout(()=>{const subj=document.getElementById('msgSubject'),ctx=document.getElementById('msgContextId'),ctype=document.getElementById('msgContextType');if(subj)subj.value=`Re: ${m?.subject||'Internal message'}`;if(ctx)ctx.value=m?.context_local_id||'';if(ctype&&m?.context_type){[...ctype.options].some(o=>{if(o.value===m.context_type||o.text===m.context_type){ctype.value=o.value||o.text;return true}return false})}},0)};
+function startCommunicationRealtime(){window.ACCUBackend?.subscribeCommunications?.(()=>{refreshCommunications({quiet:true})})}
+
 function newUuid(){
   if(globalThis.crypto?.randomUUID) return crypto.randomUUID();
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0,v=c==='x'?r:(r&3|8);return v.toString(16)});
@@ -360,6 +402,7 @@ function updateRoleUI(){
   document.getElementById('mobileQuickBtn').title=cfg.quick.label;
   if(!cfg.views.includes(activeView)) activeView='dashboard';
   showView(activeView);
+  updateCommunicationBadge();
 }
 
 function runQuickAction(){
@@ -1041,6 +1084,7 @@ function renderAll(){
 document.getElementById('todayLabel').textContent=new Date().toLocaleDateString('en-PH',{weekday:'short',year:'numeric',month:'short',day:'numeric'});
 document.querySelectorAll('.nav-item').forEach(btn=>btn.addEventListener('click',()=>showView(btn.dataset.view)));
 document.getElementById('quickSaleBtn').onclick=runQuickAction;
+const communicationBell=document.getElementById('communicationBell');if(communicationBell)communicationBell.onclick=()=>openCommunications('notifications');
 document.getElementById('mobileQuickBtn').onclick=runQuickAction;
 document.getElementById('menuBtn').onclick=openDrawer;
 document.getElementById('drawerBackdrop').onclick=closeDrawer;
@@ -1076,8 +1120,10 @@ async function hydrateFromBackend(){
     const help=document.querySelector('.role-help');if(help)help.textContent='Role is enforced by Supabase profile + Row Level Security.';
     const reset=document.getElementById('resetLocalData');if(reset)reset.style.display='none';
     if(!document.getElementById('myPasswordBtn')){const btn=document.createElement('button');btn.id='myPasswordBtn';btn.className='ghost';btn.textContent='Change my password';btn.onclick=openMyPasswordModal;document.querySelector('.sidebar-footer').appendChild(btn)}
-    if(!document.getElementById('signOutBtn')){const btn=document.createElement('button');btn.id='signOutBtn';btn.className='ghost';btn.textContent='Sign out';btn.onclick=async()=>{await b.signOut();localStorage.removeItem(STORAGE_KEY);location.reload()};document.querySelector('.sidebar-footer').appendChild(btn)}
+    if(!document.getElementById('signOutBtn')){const btn=document.createElement('button');btn.id='signOutBtn';btn.className='ghost';btn.textContent='Sign out';btn.onclick=async()=>{await b.unsubscribeCommunications?.();await b.signOut();localStorage.removeItem(STORAGE_KEY);location.reload()};document.querySelector('.sidebar-footer').appendChild(btn)}
     document.getElementById('authGate').hidden=true;renderAll();updateRoleUI();updateBackendBadge('Supabase connected','live');
+    const bell=document.getElementById('communicationBell');if(bell)bell.hidden=false;
+    await refreshCommunications({quiet:true});startCommunicationRealtime();
   }catch(e){console.error(e);updateBackendBadge('Backend error','error');document.getElementById('authGate').hidden=false;document.getElementById('authError').textContent=e.message||'Unable to connect.'}
 }
 const signInBtn=document.getElementById('authSignIn');

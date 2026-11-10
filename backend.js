@@ -165,5 +165,47 @@
     }
     return true;
   }
-  window.ACCUBackend={configured,client,status,getProfile,signIn,signOut,loadWorkspace,syncWorkspace,listProfiles,createStaffUser,resetStaffPassword,updateStaffProfile,changeOwnPassword,updateOnlineOrderState,refreshPharmacyState};
+  async function loadCommunications(){
+    if(!client||!status.user)return {notifications:[],reads:[],messages:[]};
+    const [n,r,m]=await Promise.all([
+      client.from('notifications').select('*').order('created_at',{ascending:false}).limit(120),
+      client.from('notification_reads').select('*').eq('user_id',status.user.id),
+      client.from('department_messages').select('*').order('created_at',{ascending:false}).limit(120)
+    ]);
+    if(n.error)throw n.error;if(r.error)throw r.error;if(m.error)throw m.error;
+    return {notifications:n.data||[],reads:r.data||[],messages:m.data||[]};
+  }
+  async function markNotificationRead(notificationId,acknowledge=false){
+    if(!client||!status.user)throw new Error('Sign in required.');
+    const now=new Date().toISOString();
+    const row={notification_id:notificationId,user_id:status.user.id,read_at:now};
+    if(acknowledge)row.acknowledged_at=now;
+    const {error}=await client.from('notification_reads').upsert(row,{onConflict:'notification_id,user_id'});
+    if(error)throw error;return true;
+  }
+  async function markAllNotificationsRead(notificationIds=[]){
+    if(!client||!status.user)return false;
+    const now=new Date().toISOString();
+    const rows=(notificationIds||[]).map(id=>({notification_id:id,user_id:status.user.id,read_at:now}));
+    if(!rows.length)return true;
+    const {error}=await client.from('notification_reads').upsert(rows,{onConflict:'notification_id,user_id'});
+    if(error)throw error;return true;
+  }
+  async function sendDepartmentMessage({targetDepartment,subject,body,contextType='',contextLocalId='',replyTo=null}){
+    if(!client||!status.user||!status.profile)throw new Error('Sign in required.');
+    const payload={target_department:targetDepartment,sender_user_id:status.user.id,sender_role:status.profile.role,subject:subject||'',body:body||'',context_type:contextType||'',context_local_id:contextLocalId||'',reply_to:replyTo||null};
+    const {data,error}=await client.from('department_messages').insert(payload).select().single();
+    if(error)throw error;return data;
+  }
+  let communicationsChannel=null;
+  function subscribeCommunications(onChange){
+    if(!client||communicationsChannel)return communicationsChannel;
+    communicationsChannel=client.channel(`accu-communications-${status.user?.id||'staff'}`)
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'notifications'},payload=>onChange?.('notification',payload.new))
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'department_messages'},payload=>onChange?.('message',payload.new))
+      .subscribe();
+    return communicationsChannel;
+  }
+  async function unsubscribeCommunications(){if(client&&communicationsChannel){await client.removeChannel(communicationsChannel);communicationsChannel=null}}
+  window.ACCUBackend={configured,client,status,getProfile,signIn,signOut,loadWorkspace,syncWorkspace,listProfiles,createStaffUser,resetStaffPassword,updateStaffProfile,changeOwnPassword,updateOnlineOrderState,refreshPharmacyState,loadCommunications,markNotificationRead,markAllNotificationsRead,sendDepartmentMessage,subscribeCommunications,unsubscribeCommunications};
 })();
