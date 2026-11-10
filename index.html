@@ -59,7 +59,7 @@
         <select id="roleSelect" hidden aria-hidden="true">
           <option>Administrator</option><option>Receptionist</option><option>Physician</option><option>Medical Technologist</option><option>Radiologic Technologist</option><option>Radiologist</option><option>Pharmacist</option><option>Pharmacy Assistant</option><option>Cashier</option>
         </select>
-        <p class="role-help">Access is enforced by your authenticated account and database permissions.</p>
+        
         <button id="resetLocalData" class="ghost danger" hidden>Reset local data</button>
       </div>
     </aside>
@@ -69,10 +69,11 @@
         <div>
           <p class="eyebrow">ACCU Laboratory and Diagnostic Center</p>
           <h1 id="pageTitle">Dashboard</h1>
-          <p id="roleContext" class="role-context"></p>
+          <p id="roleContext" class="role-context" hidden></p>
         </div>
         <div class="top-actions">
           <span id="backendBadge" class="backend-badge">Secure backend</span><span id="todayLabel" class="muted"></span>
+          <button id="notificationSoundToggle" class="notification-bell sound-toggle" type="button" hidden aria-label="Mute notification sounds" title="Notification sound on">🔊</button>
           <button id="communicationBell" class="notification-bell" type="button" hidden aria-label="Notifications and department inbox" title="Notifications & Department Inbox">
             <span class="bell-icon">🔔</span><span id="notificationBadge" class="notification-count" hidden>0</span>
           </button>
@@ -100,12 +101,11 @@
     <div class="auth-card">
       <img src="accu-logo.jpeg" alt="ACCU logo" />
       <div class="auth-kicker">ACCU Laboratory and Diagnostic Center</div>
-      <h2>Sign in to ACCU</h2>
-      <p>Use your authorized staff account to access the clinic system.</p>
+      <h2>Sign in</h2>
       <label>Email<input id="authEmail" type="email" autocomplete="username"></label>
       <label>Password<input id="authPassword" type="password" autocomplete="current-password"></label>
       <button id="authSignIn" class="primary">Sign in</button>
-      <p class="auth-help">Temporary password? You will be required to create your own password after signing in.</p><a class="store-login-link" href="store.html">Shop Pharmacy Online ↗</a>
+      <p class="auth-help">Temporary password users will be prompted to set a new password.</p><a class="store-login-link" href="store.html">Online Pharmacy Store ↗</a>
       <p id="authError" class="auth-error"></p>
     </div>
   </div>

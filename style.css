@@ -441,3 +441,23 @@ button.small{min-height:32px;padding:6px 10px;font-size:12px}
 .communication-copy strong{display:block;color:#123d64;margin:5px 0 3px}.communication-copy p{margin:0;white-space:pre-wrap;line-height:1.45}
 .communication-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#667887}
 @media(max-width:720px){.top-actions{gap:7px}.notification-bell{min-width:40px;height:40px}.communication-list{max-height:52vh}.communication-item{grid-template-columns:32px 1fr;padding:11px}.communication-icon{width:32px;height:32px}}
+
+/* ---------- Final UI polish ---------- */
+.role-context,.role-help{display:none!important}
+.topbar{padding-bottom:14px;border-bottom:1px solid rgba(220,229,236,.72)}
+.topbar h1{font-weight:780}
+.eyebrow{letter-spacing:.04em}
+.card{box-shadow:0 4px 14px rgba(8,51,91,.045)}
+.section-head{margin-top:18px}
+.section-head h2{font-weight:760}
+.notification-bell.sound-toggle{font-size:16px}
+.notification-bell.sound-toggle.muted-sound{color:var(--muted);background:#f7f9fb}
+.small-btn.active-setting{border-color:var(--accu-green);background:var(--accu-green-soft);color:var(--accu-green)}
+.auth-card>p:not(.auth-help):not(.auth-error){display:none}
+.communication-toolbar{flex-wrap:wrap}
+.communication-toolbar .inline-actions{justify-content:flex-end;flex-wrap:wrap}
+@media(max-width:720px){
+  .communication-toolbar{align-items:stretch}
+  .communication-toolbar>.inline-actions{width:100%;justify-content:flex-start}
+  .notification-bell.sound-toggle{min-width:40px}
+}
