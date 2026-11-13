@@ -16,12 +16,19 @@
     }
     status.profile=data; return data;
   }
+  async function logAuthActivity(event,metadata={}){
+    if(!client||!status.user||!status.profile)return false;
+    const row={user_id:status.user.id,profile_email:status.profile.email||status.user.email||'',profile_name:status.profile.full_name||'',role:status.profile.role||'',event,user_agent:navigator.userAgent||'',metadata};
+    const {error}=await client.from('auth_activity_logs').insert(row);if(error){console.warn('Auth activity log skipped',error.message);return false}return true;
+  }
   async function signIn(email,password){
     const {error}=await client.auth.signInWithPassword({email,password});
     if(error)throw error;
-    return getProfile();
+    const profile=await getProfile();
+    await logAuthActivity('LOGIN',{source:'web'});
+    return profile;
   }
-  async function signOut(){if(client)await client.auth.signOut();status.user=null;status.profile=null}
+  async function signOut(){if(client&&status.user){await logAuthActivity('LOGOUT',{source:'web'});await client.auth.signOut()}status.user=null;status.profile=null}
   async function fetchMedicineRows(){
     const role=status.profile?.role||'';
     if(role==='Pharmacy Assistant'){
@@ -165,6 +172,21 @@
     }
     return true;
   }
+  async function updateConsultQueue({localId,specialty,practitionerId,doctor,status:queueStatus,queueNo}){
+    if(!client)throw new Error('Backend not connected.');
+    const {data,error}=await client.rpc('reception_update_encounter_queue',{p_local_id:localId,p_specialty:specialty,p_practitioner_id:practitionerId||'',p_doctor:doctor||'',p_status:queueStatus,p_queue_no:queueNo||''});
+    if(error)throw error;return data;
+  }
+  async function loadAuthActivity(limit=200){
+    if(!client)return [];
+    const {data,error}=await client.from('auth_activity_logs').select('*').order('created_at',{ascending:false}).limit(limit);
+    if(error)throw error;return data||[];
+  }
+  async function sendPatientResult(kind,localId){
+    if(!client)throw new Error('Backend not connected.');
+    const {data,error}=await client.functions.invoke('send-patient-result',{body:{kind,localId}});
+    if(error)throw error;if(data?.error)throw new Error(data.error);return data;
+  }
   async function loadCommunications(){
     if(!client||!status.user)return {notifications:[],reads:[],messages:[]};
     const [n,r,m]=await Promise.all([
@@ -207,5 +229,5 @@
     return communicationsChannel;
   }
   async function unsubscribeCommunications(){if(client&&communicationsChannel){await client.removeChannel(communicationsChannel);communicationsChannel=null}}
-  window.ACCUBackend={configured,client,status,getProfile,signIn,signOut,loadWorkspace,syncWorkspace,listProfiles,createStaffUser,resetStaffPassword,updateStaffProfile,changeOwnPassword,updateOnlineOrderState,refreshPharmacyState,loadCommunications,markNotificationRead,markAllNotificationsRead,sendDepartmentMessage,subscribeCommunications,unsubscribeCommunications};
+  window.ACCUBackend={configured,client,status,getProfile,signIn,signOut,loadWorkspace,syncWorkspace,listProfiles,createStaffUser,resetStaffPassword,updateStaffProfile,changeOwnPassword,updateOnlineOrderState,refreshPharmacyState,updateConsultQueue,loadAuthActivity,sendPatientResult,loadCommunications,markNotificationRead,markAllNotificationsRead,sendDepartmentMessage,subscribeCommunications,unsubscribeCommunications};
 })();
