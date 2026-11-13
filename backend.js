@@ -177,6 +177,11 @@
     const {data,error}=await client.rpc('reception_update_encounter_queue',{p_local_id:localId,p_specialty:specialty,p_practitioner_id:practitionerId||'',p_doctor:doctor||'',p_status:queueStatus,p_queue_no:queueNo||''});
     if(error)throw error;return data;
   }
+  async function updateConsultIntake({localId,specialty,practitionerId,doctor,status:queueStatus,queueNo,chief,vitals}){
+    if(!client)throw new Error('Backend not connected.');
+    const {data,error}=await client.rpc('reception_update_encounter_intake',{p_local_id:localId,p_specialty:specialty,p_practitioner_id:practitionerId||'',p_doctor:doctor||'',p_status:queueStatus,p_queue_no:queueNo||'',p_chief:chief||'',p_vitals:vitals||{}});
+    if(error)throw error;return data;
+  }
   async function loadAuthActivity(limit=200){
     if(!client)return [];
     const {data,error}=await client.from('auth_activity_logs').select('*').order('created_at',{ascending:false}).limit(limit);
@@ -229,5 +234,5 @@
     return communicationsChannel;
   }
   async function unsubscribeCommunications(){if(client&&communicationsChannel){await client.removeChannel(communicationsChannel);communicationsChannel=null}}
-  window.ACCUBackend={configured,client,status,getProfile,signIn,signOut,loadWorkspace,syncWorkspace,listProfiles,createStaffUser,resetStaffPassword,updateStaffProfile,changeOwnPassword,updateOnlineOrderState,refreshPharmacyState,updateConsultQueue,loadAuthActivity,sendPatientResult,loadCommunications,markNotificationRead,markAllNotificationsRead,sendDepartmentMessage,subscribeCommunications,unsubscribeCommunications};
+  window.ACCUBackend={configured,client,status,getProfile,signIn,signOut,loadWorkspace,syncWorkspace,listProfiles,createStaffUser,resetStaffPassword,updateStaffProfile,changeOwnPassword,updateOnlineOrderState,refreshPharmacyState,updateConsultQueue,updateConsultIntake,loadAuthActivity,sendPatientResult,loadCommunications,markNotificationRead,markAllNotificationsRead,sendDepartmentMessage,subscribeCommunications,unsubscribeCommunications};
 })();
