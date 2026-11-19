@@ -152,10 +152,25 @@ let messageRecipients=[];
 let communicationTab='notifications';
 const NOTIFICATION_SOUND_KEY='accu:notification-sound';
 const DESKTOP_ALERT_KEY='accu:desktop-alerts';
+const NOTIFICATION_VIBRATION_KEY='accu:notification-vibration';
+let deferredInstallPrompt=null;
 let notificationAudioContext=null;
 
 function notificationSoundEnabled(){return localStorage.getItem(NOTIFICATION_SOUND_KEY)!=='off'}
 function desktopAlertsEnabled(){return localStorage.getItem(DESKTOP_ALERT_KEY)==='on'&&('Notification' in window)&&Notification.permission==='granted'}
+function notificationVibrationEnabled(){return localStorage.getItem(NOTIFICATION_VIBRATION_KEY)!=='off'}
+function playNotificationVibration(notification={}){
+  if(!notificationVibrationEnabled()||!('vibrate' in navigator))return;
+  try{
+    const warning=notification.severity==='warning'||notification.requires_ack;
+    navigator.vibrate(warning?[180,80,220]:[120,60,120]);
+  }catch{}
+}
+window.toggleNotificationVibration=function(){
+  localStorage.setItem(NOTIFICATION_VIBRATION_KEY,notificationVibrationEnabled()?'off':'on');
+  if(notificationVibrationEnabled()&&('vibrate' in navigator))try{navigator.vibrate(70)}catch{}
+  openCommunications('notifications');
+};
 function updateNotificationSoundUI(){
   const btn=document.getElementById('notificationSoundToggle');
   if(!btn)return;
@@ -192,13 +207,14 @@ function playNotificationSound(notification={}){
 function showDesktopAlert(notification={}){
   if(!desktopAlertsEnabled()||!document.hidden)return;
   try{
-    const n=new Notification(notification.title||'ACCU Notification',{body:notification.message||'',tag:`accu-${notification.id||Date.now()}`,renotify:true});
+    const n=new Notification(notification.title||'ACCU Notification',{body:notification.message||'',tag:`accu-${notification.id||Date.now()}`,renotify:true,silent:false,vibrate:notification.severity==='warning'||notification.requires_ack?[180,80,220]:[120,60,120],icon:'icons/icon-192.png',badge:'icons/icon-192.png'});
     n.onclick=()=>{window.focus();openCommunications('notifications');n.close()};
   }catch{}
 }
 function handleRealtimeCommunication(kind,row){
   if(kind==='notification'){
     playNotificationSound(row||{});
+    playNotificationVibration(row||{});
     showDesktopAlert(row||{});
   }
   refreshCommunications({quiet:true});
@@ -270,7 +286,7 @@ window.openCommunications=function(tab='notifications'){
   let body='';
   if(tab==='notifications'){
     const desktopOn=desktopAlertsEnabled();
-    body=`<div class="communication-toolbar"><div><strong>${unreadNotifications().length} unread</strong></div><div class="inline-actions"><button class="small-btn communication-compose-shortcut" onclick="openCommunications('compose')">＋ Message</button><button class="small-btn" onclick="toggleNotificationSound()">${notificationSoundEnabled()?'🔊 Sound':'🔇 Sound'}</button><button class="small-btn ${desktopOn?'active-setting':''}" onclick="toggleDesktopAlerts()">${desktopOn?'Desktop alerts on':'Desktop alerts'}</button>${notifications.length?'<button class="small-btn" onclick="markAllCommunicationRead()">Mark all read</button>':''}</div></div><div class="communication-list">${notifications.map(n=>{const r=readMap.get(n.id),unread=!r,ctx=communicationContextLabel(n);return `<article class="communication-item ${unread?'unread':''}"><div class="communication-icon">${notificationIcon(n)}</div><div class="communication-copy"><div class="communication-meta"><span class="badge blue">${esc(n.department)}</span><span>${new Date(n.created_at).toLocaleString('en-PH')}</span></div><strong>${esc(n.title)}</strong><p>${esc(n.message||'')}</p>${ctx?`<small class="muted">${esc(ctx)}</small>`:''}<div class="inline-actions" style="margin-top:8px">${unread?`<button class="small-btn" onclick="markCommunicationRead('${n.id}',${n.requires_ack?'true':'false'})">${n.requires_ack?'Acknowledge':'Mark read'}</button>`:''}${n.entity_type?`<button class="small-btn" onclick="openCommunicationContext('${n.id}')">Open</button>`:''}</div></div></article>`}).join('')||'<div class="empty">No notifications yet.</div>'}</div>`;
+    body=`<div class="communication-toolbar"><div><strong>${unreadNotifications().length} unread</strong></div><div class="inline-actions"><button class="small-btn communication-compose-shortcut" onclick="openCommunications('compose')">＋ Message</button><button class="small-btn" onclick="toggleNotificationSound()">${notificationSoundEnabled()?'🔊 Sound':'🔇 Sound'}</button><button class="small-btn" onclick="toggleNotificationVibration()">${notificationVibrationEnabled()?'📳 Vibration':'📴 Vibration'}</button><button class="small-btn ${desktopOn?'active-setting':''}" onclick="toggleDesktopAlerts()">${desktopOn?'Desktop alerts on':'Desktop alerts'}</button>${notifications.length?'<button class="small-btn" onclick="markAllCommunicationRead()">Mark all read</button>':''}</div></div><div class="communication-list">${notifications.map(n=>{const r=readMap.get(n.id),unread=!r,ctx=communicationContextLabel(n);return `<article class="communication-item ${unread?'unread':''}"><div class="communication-icon">${notificationIcon(n)}</div><div class="communication-copy"><div class="communication-meta"><span class="badge blue">${esc(n.department)}</span><span>${new Date(n.created_at).toLocaleString('en-PH')}</span></div><strong>${esc(n.title)}</strong><p>${esc(n.message||'')}</p>${ctx?`<small class="muted">${esc(ctx)}</small>`:''}<div class="inline-actions" style="margin-top:8px">${unread?`<button class="small-btn" onclick="markCommunicationRead('${n.id}',${n.requires_ack?'true':'false'})">${n.requires_ack?'Acknowledge':'Mark read'}</button>`:''}${n.entity_type?`<button class="small-btn" onclick="openCommunicationContext('${n.id}')">Open</button>`:''}</div></div></article>`}).join('')||'<div class="empty">No notifications yet.</div>'}</div>`;
   }else if(tab==='inbox'){
     body=`<div class="communication-toolbar communication-inbox-toolbar"><div><strong>Internal messages</strong></div><div class="inline-actions"><button class="small-btn communication-compose-shortcut" onclick="openCommunications('compose')">＋ Message</button></div></div><div class="communication-list">${messages.map(m=>`<article class="communication-item"><div class="communication-icon">💬</div><div class="communication-copy"><div class="communication-meta"><span class="badge green">To ${esc(messageTargetLabel(m))}</span><span>${new Date(m.created_at).toLocaleString('en-PH')}</span></div><strong>${esc(m.subject||'Internal message')}</strong><p>${esc(m.body)}</p><small class="muted">From ${esc(messageSenderLabel(m))}${m.context_local_id?` · ${esc(m.context_type||'Reference')} ${esc(m.context_local_id)}`:''}</small><div class="inline-actions" style="margin-top:8px"><button class="small-btn" onclick="replyDepartmentMessage('${m.id}')">Reply</button></div></div></article>`).join('')||'<div class="empty">No internal messages yet.</div>'}</div>`;
   }else{
@@ -1106,6 +1122,36 @@ function renderAll(){
     else if(el) el.innerHTML='';
   });
 }
+
+
+// Installable PWA support.
+function isStandaloneApp(){return window.matchMedia?.('(display-mode: standalone)').matches||window.navigator.standalone===true}
+function isIosDevice(){return /iphone|ipad|ipod/i.test(navigator.userAgent)}
+function updateInstallAppUI(){
+  const btn=document.getElementById('installAppBtn'),hint=document.getElementById('installAppHint');
+  if(!btn)return;
+  if(isStandaloneApp()){btn.hidden=true;if(hint)hint.hidden=true;return;}
+  if(deferredInstallPrompt){btn.hidden=false;btn.textContent='📲 Install ACCU App';if(hint)hint.hidden=true;return;}
+  if(isIosDevice()){
+    btn.hidden=false;btn.textContent='📲 Add ACCU to Home Screen';
+    if(hint){hint.hidden=false;hint.textContent='On iPhone/iPad: tap Share, then Add to Home Screen.'}
+    return;
+  }
+  btn.hidden=true;if(hint)hint.hidden=true;
+}
+window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();deferredInstallPrompt=event;updateInstallAppUI()});
+window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;updateInstallAppUI()});
+async function installAccuApp(){
+  if(isIosDevice()&&!deferredInstallPrompt){alert('On iPhone/iPad, use the browser Share menu and choose “Add to Home Screen”.');return;}
+  if(!deferredInstallPrompt)return;
+  const promptEvent=deferredInstallPrompt;deferredInstallPrompt=null;
+  await promptEvent.prompt();
+  try{await promptEvent.userChoice}catch{}
+  updateInstallAppUI();
+}
+const installAppBtn=document.getElementById('installAppBtn');if(installAppBtn)installAppBtn.onclick=installAccuApp;
+updateInstallAppUI();
+if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js').catch(err=>console.warn('Service worker registration failed',err)))}
 
 // Static UI wiring
 document.getElementById('todayLabel').textContent=new Date().toLocaleDateString('en-PH',{weekday:'short',year:'numeric',month:'short',day:'numeric'});

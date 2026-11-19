@@ -4,6 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0b4a82" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="ACCU" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <title>ACCU Integrated Clinic System</title>
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -110,6 +116,8 @@
       <label>Email<input id="authEmail" type="email" autocomplete="username"></label>
       <label>Password<input id="authPassword" type="password" autocomplete="current-password"></label>
       <button id="authSignIn" class="primary">Sign in</button>
+      <button id="installAppBtn" class="ghost install-app-btn" type="button" hidden>📲 Install ACCU App</button>
+      <p id="installAppHint" class="muted install-app-hint" hidden></p>
       <p class="auth-help">Temporary password users will be prompted to set a new password.</p><a class="store-login-link" href="store.html">Online Pharmacy Store ↗</a>
       <p id="authError" class="auth-error"></p>
     </div>

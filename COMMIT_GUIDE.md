@@ -1,37 +1,33 @@
-# ACCU Direct Staff Messaging — Commit Guide
+# ACCU PWA + Sound + Vibration — Commit Guide
 
-This patch adds direct messages to a specific staff account and physician-specialty broadcasts.
+Replace/add these files in the root of the ACCU GitHub/Vercel project:
 
-## 1) GitHub
-Replace these two files in the root of your existing `accu` repository:
-
+## Replace
+- `index.html`
 - `app.js`
-- `backend.js`
+- `style.css`
 
-Do **not** replace `config.js`.
+## Add
+- `manifest.webmanifest`
+- `service-worker.js`
+- `accu-logo.jpeg` (only if the repository does not already contain it)
+- `icons/icon-192.png`
+- `icons/icon-512.png`
 
-## 2) Supabase SQL Editor
-Run this file once:
+Do **not** replace your working `config.js`, `backend.js`, Supabase SQL, or Edge Functions.
 
-`supabase/add-direct-staff-messaging.sql`
+After commit/deploy, hard-refresh once so the service worker and new manifest are registered.
 
-Run it only after the Communications Center SQL has already been installed.
+## Android
+Open the production HTTPS URL in Chrome. An **Install ACCU App** button should appear on the sign-in screen when Chrome considers it installable. Chrome's menu may also show **Install app / Add to Home screen**.
 
-## 3) No Edge Function redeploy required
-This feature uses Supabase tables/RLS/Realtime directly. Your existing Edge Functions do not need changes.
+## iPhone/iPad
+Use the browser Share menu → **Add to Home Screen**. The in-page install button displays this instruction because iOS does not expose the same programmatic install prompt.
 
-## 4) Physician specialty mapping
-For reliable specialty broadcasts:
+## Notification behavior
+- Sound: enabled by default; user can mute it.
+- Vibration: enabled by default where `navigator.vibrate()` is supported.
+- Communications Center → Notifications contains a Vibration toggle.
+- Installed PWA + Realtime alerts still require the app/browser process to be active. True notifications while fully closed require Web Push subscription/server delivery, which is not part of this patch.
 
-Admin → Administration → Physician Directory → Edit Physician → **Linked physician login**
-
-Link each OB-GYNE, Pediatrics, or Internal Medicine physician to their actual staff login.
-
-## 5) Use on phone or desktop
-🔔 → Send Message → choose:
-
-- Department
-- Specific staff account
-- Physician specialty
-
-Direct messages are visible only to sender, recipient, and Administrator.
+No new Supabase migration or Edge Function deployment is required for this patch.
