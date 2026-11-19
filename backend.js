@@ -218,11 +218,20 @@
     const {error}=await client.from('notification_reads').upsert(rows,{onConflict:'notification_id,user_id'});
     if(error)throw error;return true;
   }
-  async function sendDepartmentMessage({targetDepartment,subject,body,contextType='',contextLocalId='',replyTo=null}){
+  async function loadMessageRecipients(){
+    if(!client||!status.user)return [];
+    const {data,error}=await client.rpc('list_message_recipients');
+    if(error)throw error;
+    return data||[];
+  }
+  async function sendInternalMessage({recipientType='department',targetDepartment='',targetUserId='',targetSpecialty='',subject='',body='',contextType='',contextLocalId='',replyTo=null}){
     if(!client||!status.user||!status.profile)throw new Error('Sign in required.');
-    const payload={target_department:targetDepartment,sender_user_id:status.user.id,sender_role:status.profile.role,subject:subject||'',body:body||'',context_type:contextType||'',context_local_id:contextLocalId||'',reply_to:replyTo||null};
+    const payload={recipient_type:recipientType,target_department:targetDepartment||'',target_user_id:targetUserId||null,target_specialty:targetSpecialty||'',sender_user_id:status.user.id,sender_role:status.profile.role,subject:subject||'',body:body||'',context_type:contextType||'',context_local_id:contextLocalId||'',reply_to:replyTo||null};
     const {data,error}=await client.from('department_messages').insert(payload).select().single();
     if(error)throw error;return data;
+  }
+  async function sendDepartmentMessage({targetDepartment,subject,body,contextType='',contextLocalId='',replyTo=null}){
+    return sendInternalMessage({recipientType:'department',targetDepartment,subject,body,contextType,contextLocalId,replyTo});
   }
   let communicationsChannel=null;
   function subscribeCommunications(onChange){
@@ -234,5 +243,5 @@
     return communicationsChannel;
   }
   async function unsubscribeCommunications(){if(client&&communicationsChannel){await client.removeChannel(communicationsChannel);communicationsChannel=null}}
-  window.ACCUBackend={configured,client,status,getProfile,signIn,signOut,loadWorkspace,syncWorkspace,listProfiles,createStaffUser,resetStaffPassword,updateStaffProfile,changeOwnPassword,updateOnlineOrderState,refreshPharmacyState,updateConsultQueue,updateConsultIntake,loadAuthActivity,sendPatientResult,loadCommunications,markNotificationRead,markAllNotificationsRead,sendDepartmentMessage,subscribeCommunications,unsubscribeCommunications};
+  window.ACCUBackend={configured,client,status,getProfile,signIn,signOut,loadWorkspace,syncWorkspace,listProfiles,createStaffUser,resetStaffPassword,updateStaffProfile,changeOwnPassword,updateOnlineOrderState,refreshPharmacyState,updateConsultQueue,updateConsultIntake,loadAuthActivity,sendPatientResult,loadCommunications,loadMessageRecipients,markNotificationRead,markAllNotificationsRead,sendInternalMessage,sendDepartmentMessage,subscribeCommunications,unsubscribeCommunications};
 })();

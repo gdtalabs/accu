@@ -1,1 +1,12 @@
-Adds a dedicated mobile notification bell to the ACCU phone header. The previous communications patch made the modal mobile-friendly but the desktop bell was hidden on small screens. This patch exposes a separate mobile bell and synchronizes its unread badge with the desktop bell.
+# ACCU Direct Staff Messaging Patch
+
+Adds:
+- direct message to a specific staff account
+- direct physician messaging
+- specialty broadcasts for OB-GYNE, Pediatrics, and Internal Medicine
+- recipient-aware bell notifications
+- reply-to-sender behavior
+- Admin linkage between Physician Directory entries and staff login accounts
+- server-side RLS privacy for direct messages
+
+No new Edge Function is required.

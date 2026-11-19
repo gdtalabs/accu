@@ -1,23 +1,37 @@
-# ACCU Mobile Notification Entry Patch
+# ACCU Direct Staff Messaging — Commit Guide
 
-Replace these files in the root of your current `accu` GitHub repo:
+This patch adds direct messages to a specific staff account and physician-specialty broadcasts.
 
-- `index.html`
+## 1) GitHub
+Replace these two files in the root of your existing `accu` repository:
+
 - `app.js`
-- `style.css`
+- `backend.js`
 
 Do **not** replace `config.js`.
 
-No Supabase SQL or Edge Function changes are needed.
+## 2) Supabase SQL Editor
+Run this file once:
 
-## Where messaging is on phone
-After login, look at the fixed top header. You will see:
+`supabase/add-direct-staff-messaging.sql`
 
-`☰   ACCU logo   🔔   ＋`
+Run it only after the Communications Center SQL has already been installed.
 
-Tap **🔔** to open Communications Center. It contains:
-- Notifications
-- Department Inbox
-- Send Message
+## 3) No Edge Function redeploy required
+This feature uses Supabase tables/RLS/Realtime directly. Your existing Edge Functions do not need changes.
 
-The red badge on the mobile bell shows unread notifications.
+## 4) Physician specialty mapping
+For reliable specialty broadcasts:
+
+Admin → Administration → Physician Directory → Edit Physician → **Linked physician login**
+
+Link each OB-GYNE, Pediatrics, or Internal Medicine physician to their actual staff login.
+
+## 5) Use on phone or desktop
+🔔 → Send Message → choose:
+
+- Department
+- Specific staff account
+- Physician specialty
+
+Direct messages are visible only to sender, recipient, and Administrator.
