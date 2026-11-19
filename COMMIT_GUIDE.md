@@ -1,53 +1,50 @@
-# ACCU Doctor Billing + Lab + Cashier Workflow Patch
+# ACCU Pharmacy Barcode Scanner — Commit Guide
 
-This patch is intended to be applied after the existing ACCU doctor-specific queue / notification workflow.
+This is a safe add-on. It does **not** replace `app.js`, `backend.js`, `config.js`, SQL, or Edge Functions.
 
-## 1. Replace these files in the GitHub/Vercel project root
+## 1. Add one file to your repo root
 
-- `app.js`
-- `backend.js`
-- `style.css`
+Upload:
 
-Keep your working `config.js`, `index.html`, PWA manifest, and Edge Functions unless another patch specifically tells you to change them.
+- `pharmacy-barcode.js`
 
-## 2. Keep/add the clear notification sounds
+Place it beside your existing `index.html`, `app.js`, and `config.js`.
 
-Copy these folders/files if they are not already in the project:
+## 2. Load it after `app.js`
 
-- `sounds/notification.wav`
-- `sounds/urgent.wav`
+In your current `index.html`, near the bottom where scripts are loaded, add:
 
-The system uses the same sound preference/Test Sound controls from the earlier notification patch.
+```html
+<script src="app.js"></script>
+<script src="pharmacy-barcode.js"></script>
+```
 
-## 3. Run this SQL once in Supabase SQL Editor
+If other add-on scripts are already after `app.js`, `pharmacy-barcode.js` can be loaded after them as well.
 
-Run:
+## 3. No database migration required
 
-`supabase/doctor-billing-lab-cashier.sql`
+The existing Pharmacy product model already has a `Barcode` field. Product search already includes barcode values.
 
-It is written to be rerun safely.
+For each medicine/vaccine/merchandise item:
 
-The SQL:
-- keeps Reception -> assigned Doctor queue alerts audible;
-- changes Doctor -> Reception Ready/Done alerts to audible;
-- creates a sanitized `cashier_queue` table;
-- sends Cashier an audible billing-ready alert;
-- lets Cashier mark a handoff paid without access to diagnosis/assessment data.
+**Pharmacy → Products & Inventory → Edit → Barcode**
 
-## 4. No new Edge Function is required
+Scan or type the product's barcode and save.
 
-The existing Supabase/Auth/communications setup remains in use.
+## 4. Use at Pharmacy POS
 
-## Expected workflow
+Open **POS → Pharmacy**. A new **Barcode Scanner** box appears above product search.
 
-1. Reception adds patient under a specific doctor.
-2. Assigned doctor alone gets a sound alert.
-3. Doctor taps **Ready for Patient** -> Reception gets a sound alert.
-4. Doctor completes consultation, enters PF, and chooses:
-   - **For Payment**; or
-   - **For Laboratory then Payment** and selects exact lab tests.
-5. Reception gets a sound alert with PF/next step.
-6. If laboratory tests were selected, a Laboratory order is created automatically.
-7. Cashier gets a sound alert and sees the patient under **Pending Consultation Charges**.
-8. Cashier taps **Load Charges**, selects Cash/GCash/Maya/Bank Transfer/Other, and completes the transaction.
-9. The Cashier handoff is marked Paid.
+- Click/tap the Scan Barcode field and scan with a USB/Bluetooth barcode scanner; or
+- Type the barcode and press Enter / Add.
+
+If exactly one product matches, it is automatically added to the cart.
+
+Most USB/Bluetooth POS scanners operate as a keyboard and require no special driver/API integration.
+
+## Notes
+
+- Barcode values should be unique per product/batch record used for selling.
+- If a barcode matches multiple records, the system warns instead of auto-adding the wrong item.
+- Existing generic/brand/SKU search remains available.
+- No camera barcode scanning is included in this patch.
