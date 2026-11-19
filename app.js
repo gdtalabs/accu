@@ -8,6 +8,7 @@ const seed = {
   radiologyOrders: [],
   pharmacyReturns: [],
   onlineOrders: [],
+  cashierQueue: [],
   inventory: [],
   labSupplies: [],
   labSupplyMovements: [],
@@ -95,10 +96,10 @@ const ROLE_CONFIG = {
   },
   'Physician': {
     views:['dashboard','patients','consultations','laboratory','radiology','interop'],
-    actions:['createConsult','completeConsult','createLab','createRadiology','sendResultEmail'],
+    actions:['completeConsult','createLab','createRadiology','sendResultEmail'],
     bottom:['dashboard','consultations','patients','laboratory','radiology'],
     context:'Clinical access for patient encounters and diagnostic requests, with read-only access to released laboratory and radiology results.',
-    quick:{type:'action',target:'consult',label:'+ New Consultation'}
+    quick:{type:'view',target:'consultations',label:'My Patient Queue'}
   },
   'Medical Technologist': {
     views:['dashboard','laboratory'],
@@ -161,6 +162,11 @@ const notificationAudioUrgent=new Audio('sounds/urgent.wav');
 [notificationAudioNormal,notificationAudioUrgent].forEach(a=>{a.preload='auto';a.volume=1;});
 
 function notificationSoundEnabled(){return localStorage.getItem(NOTIFICATION_SOUND_KEY)!=='off'}
+function notificationAllowsSound(notification={}){
+  const meta=notification?.metadata||{};
+  if(notification?.sound_enabled===false||meta.sound===false||meta.playSound===false)return false;
+  return true;
+}
 function desktopAlertsEnabled(){return localStorage.getItem(DESKTOP_ALERT_KEY)==='on'&&('Notification' in window)&&Notification.permission==='granted'}
 function notificationVibrationEnabled(){return localStorage.getItem(NOTIFICATION_VIBRATION_KEY)!=='off'}
 function playNotificationVibration(notification={}){
@@ -219,7 +225,7 @@ function playSynthFallback(notification={}){
   }catch{}
 }
 function playNotificationSound(notification={}){
-  if(!notificationSoundEnabled())return;
+  if(!notificationSoundEnabled()||!notificationAllowsSound(notification))return;
   const warning=notification.severity==='warning'||notification.requires_ack;
   const audio=warning?notificationAudioUrgent:notificationAudioNormal;
   try{
@@ -237,15 +243,20 @@ window.testNotificationSound=function(kind='normal'){
 function showDesktopAlert(notification={}){
   if(!desktopAlertsEnabled()||!document.hidden)return;
   try{
-    const n=new Notification(notification.title||'ACCU Notification',{body:notification.message||'',tag:`accu-${notification.id||Date.now()}`,renotify:true,silent:false,vibrate:notification.severity==='warning'||notification.requires_ack?[180,80,220]:[120,60,120],icon:'icons/icon-192.png',badge:'icons/icon-192.png'});
+    const n=new Notification(notification.title||'ACCU Notification',{body:notification.message||'',tag:`accu-${notification.id||Date.now()}`,renotify:true,silent:!notificationAllowsSound(notification),vibrate:notification.severity==='warning'||notification.requires_ack?[180,80,220]:[120,60,120],icon:'icons/icon-192.png',badge:'icons/icon-192.png'});
     n.onclick=()=>{window.focus();openCommunications('notifications');n.close()};
   }catch{}
+}
+async function refreshCashierQueue(){
+  if(!window.ACCUBackend?.configured||!['Administrator','Cashier','Receptionist'].includes(activeRole))return;
+  try{db.cashierQueue=await window.ACCUBackend.loadCashierQueue();if(activeView==='pos'&&canView('pos'))renderPOS()}catch(e){console.warn('Cashier queue refresh failed',e.message)}
 }
 function handleRealtimeCommunication(kind,row){
   if(kind==='notification'){
     playNotificationSound(row||{});
     playNotificationVibration(row||{});
     showDesktopAlert(row||{});
+    if(row?.department==='Cashier'||row?.department==='Reception')refreshCashierQueue();
   }
   refreshCommunications({quiet:true});
 }
@@ -316,7 +327,7 @@ window.openCommunications=function(tab='notifications'){
   let body='';
   if(tab==='notifications'){
     const desktopOn=desktopAlertsEnabled();
-    body=`<div class="communication-toolbar"><div><strong>${unreadNotifications().length} unread</strong></div><div class="inline-actions"><button class="small-btn communication-compose-shortcut" onclick="openCommunications('compose')">＋ Message</button><button class="small-btn" onclick="toggleNotificationSound()">${notificationSoundEnabled()?'🔊 Sound':'🔇 Sound'}</button><button class="small-btn" onclick="testNotificationSound('normal')">▶ Test Sound</button><button class="small-btn" onclick="toggleNotificationVibration()">${notificationVibrationEnabled()?'📳 Vibration':'📴 Vibration'}</button><button class="small-btn ${desktopOn?'active-setting':''}" onclick="toggleDesktopAlerts()">${desktopOn?'Desktop alerts on':'Desktop alerts'}</button>${notifications.length?'<button class="small-btn" onclick="markAllCommunicationRead()">Mark all read</button>':''}</div></div><div class="communication-list">${notifications.map(n=>{const r=readMap.get(n.id),unread=!r,ctx=communicationContextLabel(n);return `<article class="communication-item ${unread?'unread':''}"><div class="communication-icon">${notificationIcon(n)}</div><div class="communication-copy"><div class="communication-meta"><span class="badge blue">${esc(n.department)}</span><span>${new Date(n.created_at).toLocaleString('en-PH')}</span></div><strong>${esc(n.title)}</strong><p>${esc(n.message||'')}</p>${ctx?`<small class="muted">${esc(ctx)}</small>`:''}<div class="inline-actions" style="margin-top:8px">${unread?`<button class="small-btn" onclick="markCommunicationRead('${n.id}',${n.requires_ack?'true':'false'})">${n.requires_ack?'Acknowledge':'Mark read'}</button>`:''}${n.entity_type?`<button class="small-btn" onclick="openCommunicationContext('${n.id}')">Open</button>`:''}</div></div></article>`}).join('')||'<div class="empty">No notifications yet.</div>'}</div>`;
+    body=`<div class="communication-toolbar"><div><strong>${unreadNotifications().length} unread</strong></div><div class="inline-actions"><button class="small-btn communication-compose-shortcut" onclick="openCommunications('compose')">＋ Message</button><button class="small-btn" onclick="toggleNotificationSound()">${notificationSoundEnabled()?'🔊 Sound':'🔇 Sound'}</button><button class="small-btn" onclick="testNotificationSound('normal')">▶ Test Sound</button><button class="small-btn" onclick="toggleNotificationVibration()">${notificationVibrationEnabled()?'📳 Vibration':'📴 Vibration'}</button><button class="small-btn ${desktopOn?'active-setting':''}" onclick="toggleDesktopAlerts()">${desktopOn?'Desktop alerts on':'Desktop alerts'}</button>${notifications.length?'<button class="small-btn" onclick="markAllCommunicationRead()">Mark all read</button>':''}</div></div><div class="communication-list">${notifications.map(n=>{const r=readMap.get(n.id),unread=!r,ctx=communicationContextLabel(n);return `<article class="communication-item ${unread?'unread':''}"><div class="communication-icon">${notificationIcon(n)}</div><div class="communication-copy"><div class="communication-meta"><span class="badge blue">${esc(n.department)}</span><span>${new Date(n.created_at).toLocaleString('en-PH')}</span></div><strong>${esc(n.title)}</strong><p>${esc(n.message||'')}</p>${ctx?`<small class="muted">${esc(ctx)}</small>`:''}<div class="inline-actions" style="margin-top:8px">${unread?`<button class="small-btn" onclick="markCommunicationRead('${n.id}',${n.requires_ack?'true':'false'})">${n.requires_ack?'Acknowledge':'Mark read'}</button>`:''}${n.entity_type?`<button class="small-btn" onclick="openCommunicationContext('${n.id}')">Open</button>`:''}${activeRole==='Physician'&&n.type==='queue_patient'&&n.entity_local_id?`<button class="small-btn primary-mini" onclick="doctorReadyForPatient('${n.entity_local_id}')">Ready for Patient</button>`:''}</div></div></article>`}).join('')||'<div class="empty">No notifications yet.</div>'}</div>`;
   }else if(tab==='inbox'){
     body=`<div class="communication-toolbar communication-inbox-toolbar"><div><strong>Internal messages</strong></div><div class="inline-actions"><button class="small-btn communication-compose-shortcut" onclick="openCommunications('compose')">＋ Message</button></div></div><div class="communication-list">${messages.map(m=>`<article class="communication-item"><div class="communication-icon">💬</div><div class="communication-copy"><div class="communication-meta"><span class="badge green">To ${esc(messageTargetLabel(m))}</span><span>${new Date(m.created_at).toLocaleString('en-PH')}</span></div><strong>${esc(m.subject||'Internal message')}</strong><p>${esc(m.body)}</p><small class="muted">From ${esc(messageSenderLabel(m))}${m.context_local_id?` · ${esc(m.context_type||'Reference')} ${esc(m.context_local_id)}`:''}</small><div class="inline-actions" style="margin-top:8px"><button class="small-btn" onclick="replyDepartmentMessage('${m.id}')">Reply</button></div></div></article>`).join('')||'<div class="empty">No internal messages yet.</div>'}</div>`;
   }else{
@@ -328,6 +339,17 @@ window.openCommunications=function(tab='notifications'){
 };
 window.markCommunicationRead=async function(id,ack=false){try{await window.ACCUBackend.markNotificationRead(id,ack);await refreshCommunications({quiet:true});openCommunications('notifications')}catch(e){alert(e.message||'Unable to update notification.')}};
 window.markAllCommunicationRead=async function(){try{await window.ACCUBackend.markAllNotificationsRead(unreadNotifications().map(n=>n.id));await refreshCommunications({quiet:true});openCommunications('notifications')}catch(e){alert(e.message||'Unable to mark notifications read.')}};
+window.doctorReadyForPatient=async function(localId){
+  if(activeRole!=='Physician')return;
+  try{
+    await window.ACCUBackend.doctorReadyForPatient(localId);
+    const c=db.consultations.find(x=>x.id===localId);if(c)c.status='Called';
+    await refreshCommunications({quiet:true});
+    if(typeof renderConsultations==='function')renderConsultations();
+    if(typeof renderDashboard==='function')renderDashboard();
+    alert('Reception was notified that you are ready for this patient.');
+  }catch(e){alert(e.message||'Unable to notify Reception.');}
+};
 window.openCommunicationContext=async function(id){const n=(communications.notifications||[]).find(x=>x.id===id);if(!n)return;try{await window.ACCUBackend.markNotificationRead(id,false)}catch{}closeModal();await refreshCommunications({quiet:true});const type=n.entity_type||'';if(type==='online_order'){pharmacyActiveTab='online';showView('pharmacy');renderPharmacy()}else if(type==='lab_order')showView('laboratory');else if(type==='radiology_order')showView('radiology');else if(type==='encounter')showView('consultations');else if(type==='transaction')showView('reports');};
 window.sendCommunicationMessage=async function(){const recipientType=v('msgRecipientType')||'department',targetDepartment=recipientType==='department'?v('msgDepartment'):(recipientType==='specialty'?'Consultation':''),targetUserId=recipientType==='user'?v('msgTargetUser'):'',targetSpecialty=recipientType==='specialty'?v('msgTargetSpecialty'):'',subject=v('msgSubject'),body=v('msgBody'),contextType=v('msgContextType'),contextLocalId=v('msgContextId');if(!body)return alert('Message is required.');if(recipientType==='user'&&!targetUserId)return alert('Select a staff account.');if(recipientType==='specialty'&&!targetSpecialty)return alert('Select a physician specialty.');try{await window.ACCUBackend.sendInternalMessage({recipientType,targetDepartment,targetUserId,targetSpecialty,subject,body,contextType,contextLocalId});await refreshCommunications({quiet:true});openCommunications('inbox')}catch(e){alert(e.message||'Unable to send message.')}};
 window.replyDepartmentMessage=function(id){const m=(communications.messages||[]).find(x=>x.id===id);openCommunications('compose');setTimeout(()=>{const rtype=document.getElementById('msgRecipientType'),user=document.getElementById('msgTargetUser'),subj=document.getElementById('msgSubject'),ctx=document.getElementById('msgContextId'),ctype=document.getElementById('msgContextType');if(rtype){rtype.value='user';updateMessageRecipientFields()}if(user&&m?.sender_user_id)user.value=m.sender_user_id;if(subj)subj.value=`Re: ${m?.subject||'Internal message'}`;if(ctx)ctx.value=m?.context_local_id||'';if(ctype&&m?.context_type){[...ctype.options].some(o=>{if(o.value===m.context_type||o.text===m.context_type){ctype.value=o.value||o.text;return true}return false})}},0)};
@@ -348,6 +370,7 @@ function ensureInteropModel(parsed){
   (parsed.labOrders||[]).forEach(o=>{ensure(o);o.resultComponents ||= [];o.serviceIds ||= (o.tests||[]).map(t=>(parsed.services||[]).find(s=>s.name===t)?.id).filter(Boolean);});
   (parsed.radiologyOrders||[]).forEach(o=>{ensure(o);o.serviceIds ||= (o.tests||[]).map(t=>(parsed.services||[]).find(s=>s.name===t)?.id).filter(Boolean);o.findings ||= '';o.impression ||= '';o.reportedBy ||= '';});
   parsed.onlineOrders ||= [];
+  parsed.cashierQueue ||= [];
   (parsed.pharmacyReturns||[]).forEach(ensure);
   (parsed.onlineOrders||[]).forEach(ensure);
   (parsed.services||[]).forEach(x=>{ensure(x);x.localCode ||= x.id;x.codeSystem ||= (x.type==='Laboratory'?'http://loinc.org':'');x.standardCode ||= '';});
@@ -360,7 +383,7 @@ function ensureInteropModel(parsed){
 
 let db = window.ACCUBackend?.configured ? structuredClone(seed) : load();
 let cart = [];
-let saleDraft = {entity:'clinic',patientId:'',payment:'Cash',tendered:'',buyerName:'',buyerTin:'',buyerAddress:'',discountType:'None',discountId:'',discountPercent:'0',officialInvoiceRef:''};
+let saleDraft = {entity:'clinic',patientId:'',payment:'Cash',tendered:'',buyerName:'',buyerTin:'',buyerAddress:'',discountType:'None',discountId:'',discountPercent:'0',officialInvoiceRef:'',sourceEncounterId:''};
 let activeRole = localStorage.getItem(ROLE_KEY) || 'Administrator';
 if(!ROLE_CONFIG[activeRole]) activeRole = 'Administrator';
 let activeView = 'dashboard';
@@ -381,6 +404,7 @@ function load(){
     parsed.radiologyOrders ||= [];
     parsed.pharmacyReturns ||= [];
     parsed.onlineOrders ||= [];
+  parsed.cashierQueue ||= [];
     parsed.consultations ||= [];
     parsed.clinic ||= structuredClone(seed.clinic);
     parsed.clinic = {...structuredClone(seed.clinic), ...parsed.clinic};
@@ -448,8 +472,27 @@ function patientAge(p){return ageFromDob(p?.dob)}
 function patientEmail(patientId){return db.patients.find(p=>p.id===patientId)?.email||''}
 function currentStaffName(){return window.ACCUBackend?.status?.profile?.full_name||activeRole}
 function currentStaffUserId(){return window.ACCUBackend?.status?.user?.id||''}
+function currentPhysicianPractitioner(){
+  if(activeRole!=='Physician')return null;
+  const uid=currentStaffUserId(),name=String(currentStaffName()||'').trim().toLowerCase();
+  return (db.practitioners||[]).find(p=>p.role==='Physician'&&p.active!==false&&String(p.userId||'')===String(uid))
+    ||(db.practitioners||[]).find(p=>p.role==='Physician'&&p.active!==false&&String(p.name||'').trim().toLowerCase()===name)
+    ||null;
+}
+function physicianScopedConsultations(rows=db.consultations){
+  if(activeRole!=='Physician')return rows||[];
+  const practitioner=currentPhysicianPractitioner();
+  if(!practitioner)return [];
+  return (rows||[]).filter(c=>String(c.practitionerId||'')===String(practitioner.id));
+}
+function physicianPatientIdSet(){return new Set(physicianScopedConsultations(db.consultations).map(c=>c.patientId).filter(Boolean))}
+function roleVisiblePatients(rows=db.patients){if(activeRole!=='Physician')return rows||[];const ids=physicianPatientIdSet();return (rows||[]).filter(p=>ids.has(p.id))}
+function roleVisibleLabOrders(rows=db.labOrders){if(activeRole!=='Physician')return rows||[];const ids=physicianPatientIdSet();return (rows||[]).filter(o=>ids.has(o.patientId))}
+function roleVisibleRadiologyOrders(rows=db.radiologyOrders){if(activeRole!=='Physician')return rows||[];const ids=physicianPatientIdSet();return (rows||[]).filter(o=>ids.has(o.patientId))}
 function specialtyPrefix(s){return s==='OB-GYNE'?'OB':s==='Pediatrics'?'PED':'IM'}
 function nextQueueNo(specialty,date=today()){const pre=specialtyPrefix(specialty);const nums=db.consultations.filter(c=>c.date===date&&c.specialty===specialty&&String(c.queueNo||'').startsWith(pre+'-')).map(c=>Number(String(c.queueNo).split('-').pop())||0);return `${pre}-${String(Math.max(0,...nums)+1).padStart(2,'0')}`}
+function displayQueueNumber(c){const raw=String(c?.queueNo||'').trim();const m=raw.match(/(\d+)$/);return m?String(Number(m[1])):(raw||'—')}
+function nextDoctorQueueNo(practitionerId,date=today()){const nums=db.consultations.filter(c=>c.date===date&&String(c.practitionerId||'')===String(practitionerId||'')).map(c=>{const m=String(c.queueNo||'').match(/(\d+)$/);return m?Number(m[1]):0});return String(Math.max(0,...nums)+1)}
 function activeDoctors(specialty=''){return (db.practitioners||[]).filter(p=>p.role==='Physician'&&p.active!==false&&(!specialty||p.specialty===specialty)).sort((a,b)=>String(a.name).localeCompare(String(b.name)))}
 function doctorNameById(id){return db.practitioners.find(p=>p.id===id)?.name||''}
 function transactionRevenueBreakdown(rows){const out={consultation:0,laboratory:0,radiology:0,pharmacy:0,other:0,total:0};for(const t of rows){const subtotal=Number(t.subtotal||0)||((t.items||[]).reduce((a,i)=>a+Number(i.price||0)*Number(i.qty||0),0));const factor=subtotal?Number(t.total||0)/subtotal:1;for(const i of (t.items||[])){const amt=Number(i.price||0)*Number(i.qty||0)*factor;const kind=String(i.kind||'').toLowerCase();if((t.entity||'clinic')==='pharmacy'||kind==='pharmacy')out.pharmacy+=amt;else if(kind.includes('consult'))out.consultation+=amt;else if(kind.includes('lab')||kind.includes('diagnostic'))out.laboratory+=amt;else if(kind.includes('radiolog'))out.radiology+=amt;else out.other+=amt;}out.total+=Number(t.total||0)}return out}
@@ -600,12 +643,17 @@ function renderDashboard(){
     const waiting=consultToday.filter(c=>!['Completed','Cancelled','No Show'].includes(c.status)).length;
     target.innerHTML=`<div class="grid grid-4 kpi-strip">${stat('Queue Today',consultToday.length,`${waiting} active`)}${stat('OB-GYNE',consultToday.filter(c=>c.specialty==='OB-GYNE').length,'Patients today')}${stat('Pediatrics',consultToday.filter(c=>c.specialty==='Pediatrics').length,'Patients today')}${stat('Internal Medicine',consultToday.filter(c=>c.specialty==='Internal Medicine').length,'Patients today')}</div>
       <div class="card"><div class="section-head"><h2>Front Desk</h2></div><div class="action-grid">${actionCard('Register Patient','Create patient record',`openPatientModal()`)}${actionCard('Consultation Queue','Assign specialty and doctor',`openConsultModal()`)}${actionCard('Laboratory Request','Create lab request',`openLabModal()`)}${actionCard('Radiology Request','Create imaging request',`openRadiologyModal()`)}</div></div>
-      <div class="section-head"><h2>Today’s Consultation Queue</h2></div>${consultationsTable(consultToday)}<div class="section-head"><h2>Patients per Doctor</h2></div>${doctorCensusTable()}`;
+      <div class="section-head"><h2>Today’s Consultation Queues</h2></div>${doctorQueueTabs(consultToday,true,'dashboard-queues')}<div class="section-head"><h2>Patients per Doctor</h2></div>${doctorCensusTable()}`;
     return;
   }
   if(activeRole==='Physician'){
-    const myName=currentStaffName();const assigned=consultToday.filter(c=>c.doctor===myName);const physicianRows=assigned.length?assigned:consultToday;const queued=physicianRows.filter(c=>!['Completed','Cancelled','No Show'].includes(c.status));
-    target.innerHTML=`<div class="grid grid-4 kpi-strip">${stat('Assigned Today',physicianRows.length,assigned.length?'Your queue':'Clinic queue')}${stat('Waiting',queued.length,'Open encounters')}${stat('Pending Lab',pendingLabs.length,'Awaiting release')}${stat('Pending Radiology',pendingRads.length,'Awaiting final report')}</div><div class="section-head"><h2>Patient Queue</h2><button class="primary" onclick="openConsultModal()">+ New Consultation</button></div>${consultationsTable(queued.length?queued:physicianRows)}`;
+    const practitioner=currentPhysicianPractitioner();
+    const physicianRows=physicianScopedConsultations(consultToday);
+    const queued=physicianRows.filter(c=>!['Completed','Cancelled','No Show'].includes(c.status));
+    const myIds=new Set(physicianScopedConsultations(db.consultations).map(c=>c.patientId));
+    const myPendingLabs=pendingLabs.filter(o=>myIds.has(o.patientId));
+    const myPendingRads=pendingRads.filter(o=>myIds.has(o.patientId));
+    target.innerHTML=`<div class="grid grid-4 kpi-strip">${stat('Assigned Today',physicianRows.length,'Your patients')}${stat('Waiting',queued.length,'Open encounters')}${stat('Pending Lab',myPendingLabs.length,'Your patients')}${stat('Pending Radiology',myPendingRads.length,'Your patients')}</div>${!practitioner?'<div class="notice red"><strong>Physician account not linked.</strong> Ask the Administrator to link this login under Physician Directory.</div>':''}<div class="section-head"><h2>My Patient Queue</h2></div>${consultationsTable(queued.length?queued:physicianRows)}`;
     return;
   }
   if(activeRole==='Medical Technologist'){
@@ -632,25 +680,45 @@ function workflowRows(consults,labs,rads,txs){return `<div class="summary-row"><
 
 function renderPatients(){
   const add=can('addPatient')?'<button class="primary" onclick="openPatientModal()">+ Add Patient</button>':'';
-  document.getElementById('patients').innerHTML=`<div class="section-head"><h2>${db.patients.length} patients</h2><div class="toolbar"><input id="patientSearch" placeholder="Search name, ID, email, phone…">${add}</div></div><div id="patientsTable">${patientsTable(db.patients)}</div>`;
-  document.getElementById('patientSearch').oninput=e=>document.getElementById('patientsTable').innerHTML=patientsTable(db.patients.filter(p=>Object.values(p).join(' ').toLowerCase().includes(e.target.value.toLowerCase())));
+  const visible=roleVisiblePatients(db.patients);
+  document.getElementById('patients').innerHTML=`<div class="section-head"><h2>${visible.length} patient${visible.length===1?'':'s'}${activeRole==='Physician'?' assigned to you':''}</h2><div class="toolbar"><input id="patientSearch" placeholder="Search patient name, email or phone…">${add}</div></div><div id="patientsTable">${patientsTable(visible)}</div>`;
+  document.getElementById('patientSearch').oninput=e=>{const q=e.target.value.toLowerCase();document.getElementById('patientsTable').innerHTML=patientsTable(visible.filter(p=>Object.values(p).join(' ').toLowerCase().includes(q)))};
 }
-function patientsTable(rows){return `<div class="table-wrap"><table class="responsive-table"><thead><tr><th>ID</th><th>Patient</th><th>Age / Sex</th><th>Contact</th><th>Last Visit</th><th>Action</th></tr></thead><tbody>${rows.map(p=>{const visits=db.consultations.filter(c=>c.patientId===p.id).sort((a,b)=>String(b.date).localeCompare(String(a.date)));return `<tr><td data-label="ID">${p.id}</td><td data-label="Patient"><strong>${esc(p.name)}</strong>${p.email?`<br><span class="muted">${esc(p.email)}</span>`:''}</td><td data-label="Age / Sex">${patientAge(p)} yrs · ${esc(p.sex||'—')}</td><td data-label="Contact">${esc(p.phone||'—')}<br><span class="muted">${esc(p.address||'')}</span></td><td data-label="Last Visit">${visits[0]?.date||'—'}</td><td data-label="Action"><button class="small-btn" onclick="openPatientRecord('${p.id}')">Open Record</button>${can('addPatient')?` <button class="small-btn" onclick="openPatientModal('${p.id}')">Edit</button>`:''}</td></tr>`}).join('')||'<tr><td colspan="6" class="empty">No patients found.</td></tr>'}</tbody></table></div>`}
+function patientsTable(rows){return `<div class="table-wrap"><table class="responsive-table"><thead><tr><th>Patient</th><th>Age / Sex</th><th>Contact</th><th>Last Visit</th><th>Action</th></tr></thead><tbody>${rows.map(p=>{const visits=db.consultations.filter(c=>c.patientId===p.id).sort((a,b)=>String(b.date).localeCompare(String(a.date)));return `<tr><td data-label="Patient"><strong>${esc(p.name)}</strong>${p.email?`<br><span class="muted">${esc(p.email)}</span>`:''}</td><td data-label="Age / Sex">${patientAge(p)} yrs · ${esc(p.sex||'—')}</td><td data-label="Contact">${esc(p.phone||'—')}<br><span class="muted">${esc(p.address||'')}</span></td><td data-label="Last Visit">${visits[0]?.date||'—'}</td><td data-label="Action"><button class="small-btn" onclick="openPatientRecord('${p.id}')">Open Record</button>${can('addPatient')?` <button class="small-btn" onclick="openPatientModal('${p.id}')">Edit</button>`:''}</td></tr>`}).join('')||'<tr><td colspan="5" class="empty">No patients found.</td></tr>'}</tbody></table></div>`}
 window.openPatientModal=function(id=''){
   if(!guard('addPatient')) return;const existing=id?db.patients.find(p=>p.id===id):null;
   modal(existing?'Edit Patient':'Add Patient',`<div class="form-grid">${field('Full name','pName','text',existing?.name||'')}<div class="field"><label>Sex</label><select id="pSex"><option value="F" ${existing?.sex==='F'?'selected':''}>Female</option><option value="M" ${existing?.sex==='M'?'selected':''}>Male</option><option value="Other" ${existing?.sex==='Other'?'selected':''}>Other / Prefer not to say</option></select></div>${field('Date of birth','pDob','date',existing?.dob||'')}${field('Phone','pPhone','text',existing?.phone||'')}${field('Email address (optional)','pEmail','email',existing?.email||'')}<div class="field"><label>Discount</label><select id="pDiscount">${['None','Senior','PWD'].map(x=>`<option ${existing?.discount===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field full"><label>Address</label><input id="pAddress" value="${esc(existing?.address||'')}"></div></div>`,()=>{const name=v('pName');if(!name)return alert('Name is required.');const values={name,sex:v('pSex'),dob:v('pDob'),phone:v('pPhone'),email:v('pEmail').toLowerCase(),address:v('pAddress'),discount:v('pDiscount')};if(existing){Object.assign(existing,values);save(`Updated patient ${existing.id}`)}else{const pid=nextId('P',db.patients);db.patients.push({id:pid,uuid:newUuid(),identifiers:[{system:'urn:accu:patient-id',value:pid}],...values});save(`Added patient ${name}`)}closeModal()},existing?'Save Changes':'Add Patient');
 };
-window.openPatientRecord=function(id){const p=db.patients.find(x=>x.id===id);if(!p)return;const consults=db.consultations.filter(c=>c.patientId===id).sort((a,b)=>String(b.date).localeCompare(String(a.date)));const labs=db.labOrders.filter(o=>o.patientId===id).sort((a,b)=>String(b.date).localeCompare(String(a.date)));const rads=db.radiologyOrders.filter(o=>o.patientId===id).sort((a,b)=>String(b.date).localeCompare(String(a.date)));modal(`Patient Record · ${p.id}`,`<div class="patient-record-head"><div><h3>${esc(p.name)}</h3><p>${patientAge(p)} years · ${esc(p.sex||'—')} · DOB ${esc(p.dob||'—')}</p></div>${can('addPatient')?`<button class="secondary" onclick="closeModal();openPatientModal('${p.id}')">Edit Patient</button>`:''}</div><div class="patient-demographics"><div><span>Phone</span><strong>${esc(p.phone||'—')}</strong></div><div><span>Email</span><strong>${esc(p.email||'—')}</strong></div><div><span>Address</span><strong>${esc(p.address||'—')}</strong></div><div><span>Discount</span><strong>${esc(p.discount||'None')}</strong></div></div><div class="record-section"><h3>Consultations</h3>${consults.length?consults.map(c=>`<div class="record-row"><span>${esc(c.date)} · ${esc(c.specialty||'Consultation')} · ${esc(c.doctor||'Unassigned')}</span><strong>${esc(c.status)}</strong><small>${esc(c.assessment||c.chief||'')}${vitalsHasData(c.vitals)?` · ${esc(vitalsSummary(c.vitals))}`:''}</small></div>`).join(''):'<div class="empty">No consultation history.</div>'}</div><div class="record-section"><h3>Laboratory</h3>${labs.length?labs.map(o=>`<div class="record-row"><span>${esc(o.date)} · ${esc(o.id)}</span><strong>${esc(o.status)}</strong><small>${(o.tests||[]).map(esc).join(', ')}</small></div>`).join(''):'<div class="empty">No laboratory history.</div>'}</div><div class="record-section"><h3>Radiology</h3>${rads.length?rads.map(o=>`<div class="record-row"><span>${esc(o.date)} · ${esc(o.id)}</span><strong>${esc(o.status)}</strong><small>${(o.tests||[]).map(esc).join(', ')}</small></div>`).join(''):'<div class="empty">No radiology history.</div>'}</div>`,null,'Close')};
+window.openPatientRecord=function(id){if(activeRole==='Physician'&&!physicianPatientIdSet().has(id))return alert('This patient is not assigned to your physician account.');const p=db.patients.find(x=>x.id===id);if(!p)return;const consults=db.consultations.filter(c=>c.patientId===id).sort((a,b)=>String(b.date).localeCompare(String(a.date)));const labs=db.labOrders.filter(o=>o.patientId===id).sort((a,b)=>String(b.date).localeCompare(String(a.date)));const rads=db.radiologyOrders.filter(o=>o.patientId===id).sort((a,b)=>String(b.date).localeCompare(String(a.date)));modal(`Patient Record`,`<div class="patient-record-head"><div><h3>${esc(p.name)}</h3><p>${patientAge(p)} years · ${esc(p.sex||'—')} · DOB ${esc(p.dob||'—')}</p></div>${can('addPatient')?`<button class="secondary" onclick="closeModal();openPatientModal('${p.id}')">Edit Patient</button>`:''}</div><div class="patient-demographics"><div><span>Phone</span><strong>${esc(p.phone||'—')}</strong></div><div><span>Email</span><strong>${esc(p.email||'—')}</strong></div><div><span>Address</span><strong>${esc(p.address||'—')}</strong></div><div><span>Discount</span><strong>${esc(p.discount||'None')}</strong></div></div><div class="record-section"><h3>Consultations</h3>${consults.length?consults.map(c=>`<div class="record-row"><span>${esc(c.date)} · ${esc(c.specialty||'Consultation')} · ${esc(c.doctor||'Unassigned')}</span><strong>${esc(c.status)}</strong><small>${esc(c.assessment||c.chief||'')}${vitalsHasData(c.vitals)?` · ${esc(vitalsSummary(c.vitals))}`:''}</small></div>`).join(''):'<div class="empty">No consultation history.</div>'}</div><div class="record-section"><h3>Laboratory</h3>${labs.length?labs.map(o=>`<div class="record-row"><span>${esc(o.date)} · ${esc(o.id)}</span><strong>${esc(o.status)}</strong><small>${(o.tests||[]).map(esc).join(', ')}</small></div>`).join(''):'<div class="empty">No laboratory history.</div>'}</div><div class="record-section"><h3>Radiology</h3>${rads.length?rads.map(o=>`<div class="record-row"><span>${esc(o.date)} · ${esc(o.id)}</span><strong>${esc(o.status)}</strong><small>${(o.tests||[]).map(esc).join(', ')}</small></div>`).join(''):'<div class="empty">No radiology history.</div>'}</div>`,null,'Close')};
 function renderConsultations(){
-  const add=can('createConsult')?`<button class="primary" onclick="openConsultModal()">${activeRole==='Receptionist'?'+ Add to Queue':'+ New Consultation'}</button>`:'';
-  const todayRows=db.consultations.filter(c=>c.date===today());
-  document.getElementById('consultations').innerHTML=`<div class="grid grid-3 kpi-strip">${CONSULT_SPECIALTIES.map(sp=>stat(sp,todayRows.filter(c=>c.specialty===sp).length,'Today')).join('')}</div><div class="section-head"><h2>Consultation Queue & Encounters</h2>${add}</div>${consultationsTable(db.consultations)}<div class="section-head"><h2>Today · Patients per Doctor</h2></div>${doctorCensusTable()}`;
+  const add=can('createConsult')?`<button class="primary" onclick="openConsultModal()">${activeRole==='Receptionist'?'+ Add Patient':'+ New Consultation'}</button>`:'';
+  const scoped=activeRole==='Physician'?physicianScopedConsultations(db.consultations):db.consultations;
+  const todayRows=scoped.filter(c=>c.date===today());
+  document.getElementById('consultations').innerHTML=`<div class="grid grid-3 kpi-strip">${CONSULT_SPECIALTIES.map(sp=>stat(sp,todayRows.filter(c=>c.specialty===sp).length,'Today')).join('')}</div><div class="section-head"><h2>${activeRole==='Physician'?'My Patient Queue':'Consultation Queue & Encounters'}</h2>${activeRole==='Receptionist'?'':add}</div>${activeRole==='Receptionist'?doctorQueueTabs(db.consultations,true,'consult-queues'):consultationsTable(scoped)}${activeRole==='Receptionist'?'<div class="section-head"><h2>Today · Patients per Doctor</h2></div>'+doctorCensusTable():''}`;
 }
 function consultationsTable(rows){
   const showAssessment=activeRole!=='Receptionist';const canQueue=can('queueStatus');const canClinical=can('completeConsult');const hasAction=canQueue||canClinical;
   const head=`<th>Queue</th><th>Date</th><th>Patient</th><th>Specialty</th><th>Doctor</th><th>Status</th><th>Vitals</th><th>Chief Complaint</th>${showAssessment?'<th>Assessment</th>':''}${hasAction?'<th>Action</th>':''}`;
-  return `<div class="table-wrap"><table class="responsive-table"><thead><tr>${head}</tr></thead><tbody>${rows.map(c=>`<tr><td data-label="Queue"><strong>${esc(c.queueNo||c.id)}</strong><br><span class="muted">${esc(c.id)}</span></td><td data-label="Date">${esc(c.date)}</td><td data-label="Patient"><button class="link-button" onclick="openPatientRecord('${c.patientId}')"><strong>${esc(patientName(c.patientId))}</strong></button></td><td data-label="Specialty"><span class="badge blue">${esc(c.specialty||'—')}</span></td><td data-label="Doctor">${esc(c.doctor||'Unassigned')}</td><td data-label="Status"><span class="badge ${statusBadgeClass(c.status)}">${esc(c.status)}</span></td><td data-label="Vitals"><span class="muted">${esc(vitalsSummary(c.vitals))}</span></td><td data-label="Chief Complaint">${esc(c.chief||'—')}</td>${showAssessment?`<td data-label="Assessment">${esc(c.assessment||'—')}</td>`:''}${hasAction?`<td data-label="Action"><div class="inline-actions">${canQueue?`<button class="small-btn" onclick="openQueueUpdateModal('${c.id}')">Queue & Vitals</button>`:''}${canClinical?`<button class="small-btn primary-mini" onclick="openConsultModal('${c.id}')">${c.status==='Completed'?'Edit':'Open Encounter'}</button>`:''}</div></td>`:''}</tr>`).join('')||'<tr><td colspan="10" class="empty">No consultation encounters.</td></tr>'}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="responsive-table"><thead><tr>${head}</tr></thead><tbody>${rows.map(c=>`<tr><td data-label="Queue"><strong>#${esc(displayQueueNumber(c))}</strong></td><td data-label="Date">${esc(c.date)}</td><td data-label="Patient"><button class="link-button" onclick="openPatientRecord('${c.patientId}')"><strong>${esc(patientName(c.patientId))}</strong></button></td><td data-label="Specialty"><span class="badge blue">${esc(c.specialty||'—')}</span></td><td data-label="Doctor">${esc(c.doctor||'Unassigned')}</td><td data-label="Status"><span class="badge ${statusBadgeClass(c.status)}">${esc(c.status)}</span></td><td data-label="Vitals"><span class="muted">${esc(vitalsSummary(c.vitals))}</span></td><td data-label="Chief Complaint">${esc(c.chief||'—')}</td>${showAssessment?`<td data-label="Assessment">${esc(c.assessment||'—')}</td>`:''}${hasAction?`<td data-label="Action"><div class="inline-actions">${canQueue?`<button class="small-btn" onclick="openQueueUpdateModal('${c.id}')">Queue & Vitals</button>`:''}${canClinical?`<button class="small-btn primary-mini" onclick="openConsultModal('${c.id}')">${c.status==='Completed'?'Edit':'Open Encounter'}</button>`:''}</div></td>`:''}</tr>`).join('')||'<tr><td colspan="10" class="empty">No consultation encounters.</td></tr>'}</tbody></table></div>`;
 }
+function doctorQueueTabs(rows,allowAdd=false,groupId='doctor-queues'){
+  const doctors=activeDoctors();
+  const groups=doctors.map(d=>({id:d.id,name:d.name,specialty:d.specialty||'Physician',rows:(rows||[]).filter(c=>String(c.practitionerId||'')===String(d.id)).sort((a,b)=>Number(displayQueueNumber(a))-Number(displayQueueNumber(b)))}));
+  const unassigned=(rows||[]).filter(c=>!c.practitionerId||!doctors.some(d=>String(d.id)===String(c.practitionerId)));
+  if(unassigned.length)groups.push({id:'unassigned',name:'Unassigned',specialty:'Needs doctor assignment',rows:unassigned});
+  if(!groups.length)return '<div class="empty">No physicians configured yet. Add physicians under Administration → Physician Directory.</div>';
+  const first=(groups.find(g=>g.id!=='unassigned')||groups[0]).id;
+  const safeGroup=String(groupId).replace(/[^a-zA-Z0-9_-]/g,'');
+  const tabs=groups.map((g,i)=>`<button class="doctor-tab ${g.id===first?'active':''}" data-doctor-tab="${safeGroup}" data-target="${safeGroup}-${esc(g.id)}" onclick="switchDoctorQueueTab('${safeGroup}','${esc(g.id)}')"><span>${esc(g.specialty)}</span><strong>${esc(g.name)}</strong><em>${g.rows.length}</em></button>`).join('');
+  const panels=groups.map(g=>`<section class="doctor-tab-panel ${g.id===first?'active':''}" data-doctor-panel="${safeGroup}" data-doctor-id="${esc(g.id)}"><div class="doctor-queue-head"><div><h3>${esc(g.name)}</h3><span>${esc(g.specialty)} · ${g.rows.length} patient${g.rows.length===1?'':'s'}</span></div>${allowAdd&&g.id!=='unassigned'?`<button class="primary" onclick="openConsultModal('', '${g.id}')">+ Add Patient</button>`:''}</div>${consultationsTable(g.rows)}</section>`).join('');
+  return `<div class="doctor-queue-tabs-wrap"><div class="doctor-tabs" role="tablist">${tabs}</div><div class="doctor-tab-panels">${panels}</div></div>`;
+}
+window.switchDoctorQueueTab=function(groupId,doctorId){
+  document.querySelectorAll(`[data-doctor-tab="${groupId}"]`).forEach(b=>b.classList.toggle('active',b.dataset.target===`${groupId}-${doctorId}`));
+  document.querySelectorAll(`[data-doctor-panel="${groupId}"]`).forEach(p=>p.classList.toggle('active',String(p.dataset.doctorId)===String(doctorId)));
+};
+function doctorQueueSections(rows,allowAdd=false){return doctorQueueTabs(rows,allowAdd,'legacy-doctor-queues')}
+
 function doctorOptionsHtml(specialty,selected=''){const docs=activeDoctors(specialty);return `<option value="">Unassigned / next available</option>${docs.map(d=>`<option value="${esc(d.id)}" ${selected===d.id?'selected':''}>${esc(d.name)}</option>`).join('')}`}
 function emptyVitals(){return {bpSystolic:'',bpDiastolic:'',heartRate:'',respRate:'',temperature:'',spo2:'',heightCm:'',weightKg:'',bmi:'',painScore:'',notes:''}}
 function normalizedVitals(v){return v&&typeof v==='object'?{...emptyVitals(),...v}:emptyVitals()}
@@ -660,13 +728,52 @@ function vitalsSummary(v){const x=normalizedVitals(v),parts=[];if(x.bpSystolic||
 function vitalsFields(v={},prefix='v'){const x=normalizedVitals(v);return `${field('BP systolic',prefix+'Bps','number',x.bpSystolic)}${field('BP diastolic',prefix+'Bpd','number',x.bpDiastolic)}${field('Heart rate',''+prefix+'Hr','number',x.heartRate)}${field('Respiratory rate',prefix+'Rr','number',x.respRate)}${field('Temperature (°C)',prefix+'Temp','number',x.temperature)}${field('SpO₂ (%)',prefix+'Spo2','number',x.spo2)}${field('Height (cm)',prefix+'Height','number',x.heightCm)}${field('Weight (kg)',prefix+'Weight','number',x.weightKg)}${field('Pain score (0–10)',prefix+'Pain','number',x.painScore)}<div class="field full"><label>Vitals note (optional)</label><input id="${prefix}Notes" value="${esc(x.notes||'')}" placeholder="e.g. taken seated, repeat BP"></div>`}
 function readVitals(prefix='v'){const weightKg=v(prefix+'Weight'),heightCm=v(prefix+'Height');return {bpSystolic:v(prefix+'Bps'),bpDiastolic:v(prefix+'Bpd'),heartRate:v(prefix+'Hr'),respRate:v(prefix+'Rr'),temperature:v(prefix+'Temp'),spo2:v(prefix+'Spo2'),heightCm,weightKg,bmi:calculateBmi(weightKg,heightCm),painScore:v(prefix+'Pain'),notes:v(prefix+'Notes')}}
 window.refreshConsultDoctorOptions=function(){const specialty=v('cSpecialty'),sel=document.getElementById('cPractitioner');if(sel)sel.innerHTML=doctorOptionsHtml(specialty,'')};
-window.openConsultModal=function(id=''){
+function physicianLabServices(){return db.services.filter(s=>s.type==='Laboratory'||s.type==='Diagnostic')}
+function doctorLabChoicesHtml(selectedIds=[]){const chosen=new Set((selectedIds||[]).map(String));const rows=physicianLabServices().map(s=>`<label class="doctor-lab-choice"><input type="checkbox" class="doctorLabTest" value="${esc(s.id)}" ${chosen.has(String(s.id))?'checked':''}> <span><strong>${esc(s.name)}</strong><small>${money(s.price)}</small></span></label>`).join('');return rows||'<div class="notice">No laboratory services configured. Ask the Administrator to add services first.</div>'}
+window.toggleDoctorLabChoices=function(){const wrap=document.getElementById('doctorLabChoices');if(wrap)wrap.hidden=v('cDisposition')!=='For Laboratory then Payment'};
+function selectedDoctorLabServices(){return [...document.querySelectorAll('.doctorLabTest:checked')].map(x=>db.services.find(s=>String(s.id)===String(x.value))).filter(Boolean)}
+function upsertDoctorLabOrder(encounter,tests){
+  if(!tests.length)return null;
+  let order=encounter.labOrderId?db.labOrders.find(o=>o.id===encounter.labOrderId):db.labOrders.find(o=>o.sourceEncounterId===encounter.id&&o.status!=='Released');
+  if(order&&order.status!=='Released'){
+    Object.assign(order,{patientId:encounter.patientId,date:encounter.date||today(),serviceIds:tests.map(x=>x.id),tests:tests.map(x=>x.name),amount:tests.reduce((a,b)=>a+Number(b.price||0),0),sourceEncounterId:encounter.id,orderedBy:encounter.doctor||currentStaffName(),requestedByPractitionerId:encounter.practitionerId||''});
+  }else{
+    order={id:nextId('LAB',db.labOrders),uuid:newUuid(),patientId:encounter.patientId,date:encounter.date||today(),serviceIds:tests.map(x=>x.id),tests:tests.map(x=>x.name),status:'For Collection',amount:tests.reduce((a,b)=>a+Number(b.price||0),0),resultNote:'',resultComponents:[],sourceEncounterId:encounter.id,orderedBy:encounter.doctor||currentStaffName(),requestedByPractitionerId:encounter.practitionerId||''};
+    db.labOrders.unshift(order);
+  }
+  encounter.labOrderId=order.id;
+  return order;
+}
+function syncLocalCashierQueueFromEncounter(c,labTests=[]){
+  db.cashierQueue ||= [];
+  const shouldQueue=['For Payment','For Laboratory then Payment'].includes(c.disposition);
+  const idx=db.cashierQueue.findIndex(x=>x.encounterId===c.id||x.encounter_local_id===c.id);
+  if(!shouldQueue){if(idx>=0)db.cashierQueue.splice(idx,1);return}
+  const labItems=labTests.map(s=>({id:s.id,name:s.name,price:Number(s.price||0)}));
+  const row={id:idx>=0?db.cashierQueue[idx].id:`CQ-${c.id}`,encounterId:c.id,encounter_local_id:c.id,patientId:c.patientId,patient_local_id:c.patientId,patientName:patientName(c.patientId),queueNo:displayQueueNumber(c),doctorName:c.doctor||'Physician',specialty:c.specialty||'',pfAmount:Number(c.pfAmount??c.fee??0),billingInstruction:c.disposition,labItems,labAmount:labItems.reduce((a,b)=>a+b.price,0),totalDue:Number(c.pfAmount??c.fee??0)+labItems.reduce((a,b)=>a+b.price,0),status:idx>=0?(db.cashierQueue[idx].status||'Pending'):'Pending',createdAt:idx>=0?db.cashierQueue[idx].createdAt:new Date().toISOString()};
+  if(idx>=0)db.cashierQueue[idx]={...db.cashierQueue[idx],...row};else db.cashierQueue.unshift(row);
+}
+window.openConsultModal=function(id='',preselectedPractitionerId=''){
   if(id&&!guard('completeConsult'))return;if(!id&&!guard('createConsult'))return;if(!id&&!db.patients.length)return alert('Register a patient before creating a consultation encounter.');
-  const existing=id?db.consultations.find(c=>c.id===id):null,receptionist=activeRole==='Receptionist',pId=existing?.patientId||db.patients[0]?.id||'',specialty=existing?.specialty||'Internal Medicine',existingVitals=normalizedVitals(existing?.vitals);
+  const existing=id?db.consultations.find(c=>c.id===id):null,receptionist=activeRole==='Receptionist',preselected=preselectedPractitionerId?db.practitioners.find(p=>String(p.id)===String(preselectedPractitionerId)):null,pId=existing?.patientId||db.patients[0]?.id||'',specialty=existing?.specialty||preselected?.specialty||'Internal Medicine',selectedPractitionerId=existing?.practitionerId||preselectedPractitionerId||'',existingVitals=normalizedVitals(existing?.vitals);
   const intake=receptionist?vitalsFields(existingVitals,'cV'):`<div class="field full"><label>Vitals recorded by Reception</label><div class="summary-box"><strong>${esc(vitalsSummary(existingVitals))}</strong></div></div>`;
-  modal(existing?'Consultation Encounter':(receptionist?'Add to Consultation Queue':'New Consultation'),`<div class="form-grid">${patientSelect('cPatient',pId)}<div class="field"><label>Specialty</label><select id="cSpecialty" onchange="refreshConsultDoctorOptions()">${CONSULT_SPECIALTIES.map(x=>`<option ${specialty===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Doctor</label><select id="cPractitioner">${doctorOptionsHtml(specialty,existing?.practitionerId||'')}</select></div>${field('Date','cDate','date',existing?.date||today())}${field('Consultation fee','cFee','number',existing?.fee??500)}<div class="field full"><label>Chief complaint</label><input id="cChief" value="${esc(existing?.chief||'')}"></div>${intake}${!receptionist?`<div class="field full"><label>Assessment / Diagnosis</label><textarea id="cAssessment">${esc(existing?.assessment||'')}</textarea></div><div class="field"><label>Diagnosis code system</label><select id="cDxSystem"><option value="http://hl7.org/fhir/sid/icd-10" ${(existing?.diagnosisCodeSystem||'').includes('icd-10')?'selected':''}>ICD-10</option><option value="http://snomed.info/sct" ${(existing?.diagnosisCodeSystem||'').includes('snomed')?'selected':''}>SNOMED CT</option></select></div><div class="field"><label>Diagnosis code (optional)</label><input id="cDxCode" value="${esc(existing?.diagnosisCode||'')}"></div>`:''}</div>`,()=>{const sp=v('cSpecialty'),practitionerId=v('cPractitioner'),doctor=doctorNameById(practitionerId)||existing?.doctor||'',vitals=receptionist?readVitals('cV'):existingVitals;const intakeStatus=receptionist?(vitalsHasData(vitals)?'Vitals Done':'For Vitals'):'Completed';const record={patientId:v('cPatient'),specialty:sp,practitionerId,doctor,date:v('cDate')||today(),chief:v('cChief'),vitals,assessment:receptionist?(existing?.assessment||''):v('cAssessment'),diagnosisCodeSystem:receptionist?(existing?.diagnosisCodeSystem||'http://hl7.org/fhir/sid/icd-10'):(v('cDxSystem')||existing?.diagnosisCodeSystem||'http://hl7.org/fhir/sid/icd-10'),diagnosisCode:receptionist?(existing?.diagnosisCode||''):(v('cDxCode')||existing?.diagnosisCode||''),fee:+v('cFee')||0,status:intakeStatus};if(existing){Object.assign(existing,record);save(`Updated consultation ${existing.id}`)}else{record.id=nextId('C',db.consultations);record.uuid=newUuid();record.queueNo=nextQueueNo(sp,record.date);db.consultations.unshift(record);save(`Created consultation ${record.id}`)}closeModal()},existing?'Save Encounter':(receptionist?'Add to Queue':'Save Encounter'));
+  const disposition=existing?.disposition||'For Payment';
+  const physicianBilling=!receptionist?`<div class="field"><label>Professional fee (PF)</label><input id="cPfAmount" type="number" min="0" step="0.01" value="${esc(existing?.pfAmount??existing?.fee??0)}" placeholder="0.00"></div><div class="field"><label>After consultation</label><select id="cDisposition" onchange="toggleDoctorLabChoices()">${['For Payment','For Laboratory then Payment','For Radiology','For Pharmacy','Follow-up','Done / Home'].map(x=>`<option ${disposition===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field full" id="doctorLabChoices" ${disposition==='For Laboratory then Payment'?'':'hidden'}><label>Laboratory tests to request</label><div class="doctor-lab-grid">${doctorLabChoicesHtml(existing?.requestedLabServiceIds||[])}</div><small class="muted">Selected tests are sent to Laboratory and included in the Cashier handoff.</small></div>`:'';
+  modal(existing?'Consultation Encounter':(receptionist?'Add Patient to Doctor Queue':'New Consultation'),`<div class="form-grid">${patientSelect('cPatient',pId)}<div class="field"><label>Specialty</label><select id="cSpecialty" onchange="refreshConsultDoctorOptions()">${CONSULT_SPECIALTIES.map(x=>`<option ${specialty===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Doctor</label><select id="cPractitioner">${doctorOptionsHtml(specialty,selectedPractitionerId)}</select></div>${field('Date','cDate','date',existing?.date||today())}<div class="field full"><label>Chief complaint</label><input id="cChief" value="${esc(existing?.chief||'')}"></div>${intake}${!receptionist?`<div class="field full"><label>Assessment / Diagnosis</label><textarea id="cAssessment">${esc(existing?.assessment||'')}</textarea></div><div class="field"><label>Diagnosis code system</label><select id="cDxSystem"><option value="http://hl7.org/fhir/sid/icd-10" ${(existing?.diagnosisCodeSystem||'').includes('icd-10')?'selected':''}>ICD-10</option><option value="http://snomed.info/sct" ${(existing?.diagnosisCodeSystem||'').includes('snomed')?'selected':''}>SNOMED CT</option></select></div><div class="field"><label>Diagnosis code (optional)</label><input id="cDxCode" value="${esc(existing?.diagnosisCode||'')}"></div>${physicianBilling}`:''}</div>`,()=>{
+    const sp=v('cSpecialty'),practitionerId=v('cPractitioner');if(receptionist&&!practitionerId)return alert('Please select the doctor for this patient.');
+    const doctor=doctorNameById(practitionerId)||existing?.doctor||'',vitals=receptionist?readVitals('cV'):existingVitals;const intakeStatus=receptionist?(vitalsHasData(vitals)?'Vitals Done':'For Vitals'):'Completed';
+    const selectedLabs=receptionist?[]:selectedDoctorLabServices();const nextStep=receptionist?(existing?.disposition||''):(v('cDisposition')||existing?.disposition||'For Payment');
+    if(!receptionist&&nextStep==='For Laboratory then Payment'&&!selectedLabs.length)return alert('Select at least one laboratory test before completing this encounter.');
+    const pfAmount=receptionist?Number(existing?.pfAmount??existing?.fee??0):Math.max(0,Number(v('cPfAmount')||0));
+    const record={patientId:v('cPatient'),specialty:sp,practitionerId,doctor,date:v('cDate')||today(),chief:v('cChief'),vitals,assessment:receptionist?(existing?.assessment||''):v('cAssessment'),diagnosisCodeSystem:receptionist?(existing?.diagnosisCodeSystem||'http://hl7.org/fhir/sid/icd-10'):(v('cDxSystem')||existing?.diagnosisCodeSystem||'http://hl7.org/fhir/sid/icd-10'),diagnosisCode:receptionist?(existing?.diagnosisCode||''):(v('cDxCode')||existing?.diagnosisCode||''),disposition:nextStep,fee:pfAmount,pfAmount,requestedLabServiceIds:receptionist?(existing?.requestedLabServiceIds||[]):selectedLabs.map(x=>x.id),requestedLabTests:receptionist?(existing?.requestedLabTests||[]):selectedLabs.map(x=>x.name),requestedLabAmount:receptionist?Number(existing?.requestedLabAmount||0):selectedLabs.reduce((a,b)=>a+Number(b.price||0),0),status:intakeStatus,cashierStatus:receptionist?(existing?.cashierStatus||''):(['For Payment','For Laboratory then Payment'].includes(nextStep)?'Pending':'')};
+    let encounter;
+    if(existing){if(String(existing.practitionerId||'')!==String(practitionerId||''))record.queueNo=practitionerId?nextDoctorQueueNo(practitionerId,record.date):existing.queueNo;Object.assign(existing,record);encounter=existing}else{record.id=nextId('C',db.consultations);record.uuid=newUuid();record.queueNo=practitionerId?nextDoctorQueueNo(practitionerId,record.date):nextQueueNo(sp,record.date);db.consultations.unshift(record);encounter=record}
+    if(!receptionist){const order=nextStep==='For Laboratory then Payment'?upsertDoctorLabOrder(encounter,selectedLabs):null;if(order){encounter.labOrderId=order.id;encounter.requestedLabAmount=Number(order.amount||0)}syncLocalCashierQueueFromEncounter(encounter,selectedLabs)}
+    save(`${existing?'Updated':'Created'} consultation ${encounter.id}`);closeModal();
+  },existing?'Save Encounter':(receptionist?'Add to Doctor Queue':'Save Encounter'));
+  if(!receptionist)setTimeout(toggleDoctorLabChoices,0);
 };
-window.openQueueUpdateModal=function(id){if(!guard('queueStatus'))return;const c=db.consultations.find(x=>x.id===id);if(!c)return;const cv=normalizedVitals(c.vitals);modal(`Queue & Vitals · ${c.queueNo||c.id}`,`<div class="form-grid"><div class="field"><label>Specialty</label><select id="qSpecialty" onchange="refreshQueueDoctorOptions('${c.practitionerId||''}')">${CONSULT_SPECIALTIES.map(x=>`<option ${c.specialty===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Doctor</label><select id="qPractitioner">${doctorOptionsHtml(c.specialty,c.practitionerId||'')}</select></div><div class="field full"><label>Chief complaint</label><input id="qChief" value="${esc(c.chief||'')}"></div>${vitalsFields(cv,'qV')}<div class="field full"><label>Status</label><select id="qStatus">${QUEUE_STATUSES.map(x=>`<option ${c.status===x?'selected':''}>${x}</option>`).join('')}</select></div></div>`,async()=>{const specialty=v('qSpecialty'),practitionerId=v('qPractitioner'),doctor=doctorNameById(practitionerId),chief=v('qChief'),vitals=readVitals('qV');let status=v('qStatus'),queueNo=specialty!==c.specialty?nextQueueNo(specialty,c.date):(c.queueNo||nextQueueNo(specialty,c.date));if(status==='For Vitals'&&vitalsHasData(vitals))status='Vitals Done';if(activeRole==='Receptionist'&&status==='Completed')return alert('Clinical completion should be recorded by the physician.');try{if(window.ACCUBackend?.configured&&activeRole==='Receptionist')await window.ACCUBackend.updateConsultIntake({localId:c.id,specialty,practitionerId,doctor,status,queueNo,chief,vitals});Object.assign(c,{specialty,practitionerId,doctor,status,queueNo,chief,vitals});save(`Updated queue and vitals ${c.id}`);closeModal()}catch(e){alert(e.message||'Unable to update queue and vitals.')}},'Save Intake');};
+window.openQueueUpdateModal=function(id){if(!guard('queueStatus'))return;const c=db.consultations.find(x=>x.id===id);if(!c)return;const cv=normalizedVitals(c.vitals);modal(`Queue & Vitals · ${c.queueNo||c.id}`,`<div class="form-grid"><div class="field"><label>Specialty</label><select id="qSpecialty" onchange="refreshQueueDoctorOptions('${c.practitionerId||''}')">${CONSULT_SPECIALTIES.map(x=>`<option ${c.specialty===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Doctor</label><select id="qPractitioner">${doctorOptionsHtml(c.specialty,c.practitionerId||'')}</select></div><div class="field full"><label>Chief complaint</label><input id="qChief" value="${esc(c.chief||'')}"></div>${vitalsFields(cv,'qV')}<div class="field full"><label>Status</label><select id="qStatus">${QUEUE_STATUSES.map(x=>`<option ${c.status===x?'selected':''}>${x}</option>`).join('')}</select></div></div>`,async()=>{const specialty=v('qSpecialty'),practitionerId=v('qPractitioner');if(activeRole==='Receptionist'&&!practitionerId)return alert('Please select the doctor for this patient.');const doctor=doctorNameById(practitionerId),chief=v('qChief'),vitals=readVitals('qV');let status=v('qStatus'),queueNo=String(practitionerId)!==String(c.practitionerId||'')?(practitionerId?nextDoctorQueueNo(practitionerId,c.date):c.queueNo):(c.queueNo||(practitionerId?nextDoctorQueueNo(practitionerId,c.date):nextQueueNo(specialty,c.date)));if(status==='For Vitals'&&vitalsHasData(vitals))status='Vitals Done';if(activeRole==='Receptionist'&&status==='Completed')return alert('Clinical completion should be recorded by the physician.');try{if(window.ACCUBackend?.configured&&activeRole==='Receptionist')await window.ACCUBackend.updateConsultIntake({localId:c.id,specialty,practitionerId,doctor,status,queueNo,chief,vitals});Object.assign(c,{specialty,practitionerId,doctor,status,queueNo,chief,vitals});save(`Updated queue and vitals ${c.id}`);closeModal()}catch(e){alert(e.message||'Unable to update queue and vitals.')}},'Save Intake');};
 window.refreshQueueDoctorOptions=function(selected=''){const sel=document.getElementById('qPractitioner');if(sel)sel.innerHTML=doctorOptionsHtml(v('qSpecialty'),selected)};
 function renderLab(){
   const canSupplies=['Administrator','Medical Technologist'].includes(activeRole);
@@ -680,7 +787,8 @@ function renderLab(){
     target.innerHTML=`${tabs}<div class="grid grid-3 kpi-strip">${stat('Supply Batches',db.labSupplies.length,'Tracked laboratory supply batches')}${stat('Low Stock',low,'At or below reorder level')}${stat('Expiring ≤90 Days',expSoon,'Batches needing attention')}</div><div class="section-head"><div><h2>Laboratory Supplies</h2></div>${can('addLabSupply')?'<button class="primary" onclick="openLabSupplyModal()">+ Add Supply Batch</button>':''}</div>${labSuppliesTable(db.labSupplies)}`;
     return;
   }
-  target.innerHTML=`${tabs}<div class="section-head"><h2>Laboratory Orders</h2>${addOrder}</div>${labTable(db.labOrders)}`;
+  const visibleOrders=roleVisibleLabOrders(db.labOrders);
+  target.innerHTML=`${tabs}<div class="section-head"><h2>${activeRole==='Physician'?'Laboratory · My Patients':'Laboratory Orders'}</h2>${addOrder}</div>${labTable(visibleOrders)}`;
 }
 window.setLabTab=function(tab){labActiveTab=tab;renderLab()};
 function labTable(rows){
@@ -729,7 +837,8 @@ function renderRadiology(){
   const pending=db.radiologyOrders.filter(o=>o.status!=='Final').length;
   const forReading=db.radiologyOrders.filter(o=>['Performed','For Reading'].includes(o.status)).length;
   const finalToday=db.radiologyOrders.filter(o=>o.status==='Final'&&o.date===today()).length;
-  document.getElementById('radiology').innerHTML=`<div class="grid grid-3 kpi-strip">${stat('Open Orders',pending,'Not yet final')}${stat('For Reading',forReading,'Ready for interpretation')}${stat('Final Today',finalToday,'Reports completed today')}</div><div class="section-head"><div><h2>Radiology Worklist</h2></div>${add}</div>${radiologyTable(db.radiologyOrders)}`;
+  const visibleRadiology=roleVisibleRadiologyOrders(db.radiologyOrders);
+  document.getElementById('radiology').innerHTML=`<div class="grid grid-3 kpi-strip">${stat('Open Orders',activeRole==='Physician'?visibleRadiology.filter(o=>o.status!=='Final').length:pending,'Not yet final')}${stat('For Reading',activeRole==='Physician'?visibleRadiology.filter(o=>['Performed','For Reading'].includes(o.status)).length:forReading,'Ready for interpretation')}${stat('Final Today',activeRole==='Physician'?visibleRadiology.filter(o=>o.status==='Final'&&o.date===today()).length:finalToday,'Reports completed today')}</div><div class="section-head"><div><h2>${activeRole==='Physician'?'Radiology · My Patients':'Radiology Worklist'}</h2></div>${add}</div>${radiologyTable(visibleRadiology)}`;
 }
 function radiologyTable(rows){
   const showReport=['Administrator','Physician','Radiologist'].includes(activeRole),hasActions=can('radiologyStatus')||can('radiologyReport')||can('sendResultEmail');
@@ -868,6 +977,19 @@ function buyerAndDiscountFields(){
     </div>
   </details>`;
 }
+function pendingCashierQueue(){return (db.cashierQueue||[]).filter(x=>!['Paid','Cancelled'].includes(x.status||'Pending')).sort((a,b)=>String(a.createdAt||a.created_at||'').localeCompare(String(b.createdAt||b.created_at||'')))}
+function cashierHandoffPanel(){
+  if(!['Administrator','Cashier'].includes(activeRole)||currentSaleEntity()!=='clinic')return '';
+  const rows=pendingCashierQueue();
+  return `<div class="card cashier-handoff-card"><div class="section-head"><div><h2>Pending Consultation Charges</h2><span>${rows.length} waiting for payment</span></div></div>${rows.length?`<div class="cashier-handoff-list">${rows.map(r=>{const labs=r.labItems||r.lab_items||[];const total=Number(r.totalDue??r.total_due??(Number(r.pfAmount??r.pf_amount??0)+Number(r.labAmount??r.lab_amount??0)));return `<article class="cashier-handoff-row"><div><strong>Patient #${esc(r.queueNo||r.queue_no||'—')} · ${esc(r.patientName||r.patient_name||patientName(r.patientId||r.patient_local_id))}</strong><span>${esc(r.doctorName||r.doctor_name||'Physician')} · ${esc(r.specialty||'')}</span><small>${esc(r.billingInstruction||r.billing_instruction||'PF Payment Only')}${labs.length?` · ${labs.map(x=>esc(x.name||x)).join(', ')}`:''}</small></div><div class="cashier-handoff-amount"><span>PF ${money(r.pfAmount??r.pf_amount??0)}</span>${Number(r.labAmount??r.lab_amount??0)>0?`<span>Lab ${money(r.labAmount??r.lab_amount??0)}</span>`:''}<strong>${money(total)}</strong></div><button class="primary" onclick="loadConsultationCharges('${esc(r.encounterId||r.encounter_local_id)}')">Load Charges</button></article>`}).join('')}</div>`:'<div class="empty">No consultation charges waiting for Cashier.</div>'}</div>`;
+}
+window.loadConsultationCharges=function(encounterId){
+  const r=(db.cashierQueue||[]).find(x=>String(x.encounterId||x.encounter_local_id)===String(encounterId));if(!r)return alert('Cashier handoff not found. Refresh the page and try again.');
+  saleDraft.entity='clinic';saleDraft.patientId=r.patientId||r.patient_local_id||'';saleDraft.buyerName=r.patientName||r.patient_name||patientName(saleDraft.patientId);saleDraft.sourceEncounterId=encounterId;saleDraft.tendered='';cart=[];
+  const pf=Number(r.pfAmount??r.pf_amount??0);if(pf>0){const svc=db.services.find(s=>s.type==='Consultation');cart.push({kind:'Consultation',refId:svc?.id||`PF-${encounterId}`,name:`Professional Fee — ${r.doctorName||r.doctor_name||'Physician'}`,qty:1,price:pf,taxClass:svc?.taxClass||'Unclassified'});}
+  const labs=r.labItems||r.lab_items||[];for(const item of labs){const svc=db.services.find(s=>String(s.id)===String(item.id));cart.push({kind:'Laboratory',refId:svc?.id||item.id||`LAB-${Date.now()}`,name:svc?.name||item.name||'Laboratory Service',qty:1,price:Number(svc?.price??item.price??0),taxClass:svc?.taxClass||'Unclassified'});}
+  renderPOS();document.getElementById('salePatient')?.scrollIntoView({behavior:'smooth',block:'center'});
+};
 function renderPOS(){
   if(!canView('pos'))return;
   const entity=currentSaleEntity();
@@ -880,14 +1002,15 @@ function renderPOS(){
   const serviceCard=services.length?`<div class="card"><div class="section-head"><h2>Clinic & Diagnostic Services</h2></div><div class="catalog">${services.map(s=>`<button class="catalog-item" onclick="addService('${s.id}')"><strong>${esc(s.name)}</strong><span>${s.type} · ${money(s.price)}</span></button>`).join('')}</div></div>`:'';
   const medicineCard=entity==='pharmacy'?`<div class="card"><div class="section-head"><div><h2>Pharmacy Products</h2></div></div><div class="field"><input class="search-input" value="${esc(medicinePosSearch)}" placeholder="Search product, generic, brand, category, SKU…" oninput="setMedicinePosSearch(this.value)"></div><div class="catalog">${medicines.map(i=>`<button class="catalog-item" onclick="addMedicine('${i.id}')"><strong>${esc(pharmacyProductName(i))}</strong><span>${esc(pharmacyProductMeta(i)||'Pharmacy product')}<br>${esc(i.batch||i.sku||'')} · Stock ${i.qty} · ${money(i.sell)}${i.prescriptionRequired?' · Rx':''}</span></button>`).join('')||'<div class="empty">No saleable pharmacy products match your search.</div>'}</div></div>`:'';
   const entityNotice=entity==='pharmacy'?`<div class="notice blue"><strong>Pharmacy transaction.</strong> Pharmacy products are recorded separately from clinic and diagnostic services.</div>`:`<div class="notice blue"><strong>Clinic / diagnostic transaction.</strong> Pharmacy products are recorded separately.</div>`;
-  document.getElementById('pos').innerHTML=`${entitySelector}${entityNotice}<div class="pos-layout"><div>${serviceCard}${medicineCard}</div><div class="card"><div class="section-head"><div><h2>${entityLabel(entity)} Transaction</h2></div><button class="ghost" onclick="clearCart()">Clear</button></div><div class="field"><label>Patient / Buyer</label><select id="salePatient" onchange="changeSalePatient(this.value)"><option value="">Walk-in</option>${db.patients.map(p=>`<option value="${p.id}" ${saleDraft.patientId===p.id?'selected':''}>${esc(p.name)} (${p.id})</option>`).join('')}</select></div>${buyerAndDiscountFields()}<div id="cartLines">${cart.length?cart.map((x,idx)=>`<div class="cart-line"><div><strong>${esc(x.name)}</strong><br><span class="muted">${x.kind}</span></div><input type="number" min="1" value="${x.qty}" onchange="updateCartQty(${idx},this.value)"><div>${money(x.price*x.qty)}</div><button class="close-x" onclick="removeCartItem(${idx})">×</button></div>`).join(''):'<div class="empty">Add items to this transaction.</div>'}</div>${saleSummary()}${paymentFields()}<button class="primary checkout-btn" onclick="checkout()" ${cart.length?'':'disabled'}>Complete Transaction</button><p class="transaction-disclaimer">Internal record only. The official BIR invoice, when applicable, is issued separately by ACCU.</p></div></div>`;
+  document.getElementById('pos').innerHTML=`${entitySelector}${entityNotice}${cashierHandoffPanel()}<div class="pos-layout"><div>${serviceCard}${medicineCard}</div><div class="card"><div class="section-head"><div><h2>${entityLabel(entity)} Transaction</h2></div><button class="ghost" onclick="clearCart()">Clear</button></div><div class="field"><label>Patient / Buyer</label><select id="salePatient" onchange="changeSalePatient(this.value)"><option value="">Walk-in</option>${db.patients.map(p=>`<option value="${p.id}" ${saleDraft.patientId===p.id?'selected':''}>${esc(p.name)} (${p.id})</option>`).join('')}</select></div>${buyerAndDiscountFields()}<div id="cartLines">${cart.length?cart.map((x,idx)=>`<div class="cart-line"><div><strong>${esc(x.name)}</strong><br><span class="muted">${x.kind}</span></div><input type="number" min="1" value="${x.qty}" onchange="updateCartQty(${idx},this.value)"><div>${money(x.price*x.qty)}</div><button class="close-x" onclick="removeCartItem(${idx})">×</button></div>`).join(''):'<div class="empty">Add items to this transaction.</div>'}</div>${saleSummary()}${paymentFields()}<button class="primary checkout-btn" onclick="checkout()" ${cart.length?'':'disabled'}>Complete Transaction</button><p class="transaction-disclaimer">Internal record only. The official BIR invoice, when applicable, is issued separately by ACCU.</p></div></div>`;
 }
-window.changeSaleEntity=function(entity){if(!['Administrator','Cashier'].includes(activeRole))return;captureSaleDraft();if(saleDraft.entity!==entity&&cart.length&&!confirm('Changing billing entity will clear the current cart. Continue?'))return;saleDraft.entity=entity;cart=[];saleDraft.tendered='';medicinePosSearch='';renderPOS()};
+window.changeSaleEntity=function(entity){if(!['Administrator','Cashier'].includes(activeRole))return;captureSaleDraft();if(saleDraft.entity!==entity&&cart.length&&!confirm('Changing billing entity will clear the current cart. Continue?'))return;saleDraft.entity=entity;cart=[];saleDraft.tendered='';saleDraft.sourceEncounterId='';medicinePosSearch='';renderPOS()};
 window.setMedicinePosSearch=function(value){medicinePosSearch=value;captureSaleDraft();renderPOS();const el=document.querySelector('#pos .search-input');if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length)}};
 
 window.changeSalePatient=function(value){
   captureSaleDraft();
   saleDraft.patientId=value;
+  saleDraft.sourceEncounterId='';
   const p=db.patients.find(x=>x.id===value);
   if(p && !saleDraft.buyerName) saleDraft.buyerName=p.name;
   renderPOS();
@@ -900,7 +1023,7 @@ window.addMedicine=function(id){if(!can('checkout'))return;captureSaleDraft();if
 function addCartLine(line){const existing=cart.find(x=>x.kind===line.kind&&x.refId===line.refId);if(existing)existing.qty+=1;else cart.push(line)}
 window.updateCartQty=function(idx,value){if(!can('checkout'))return;captureSaleDraft();cart[idx].qty=Math.max(1,+value||1);renderPOS()};
 window.removeCartItem=function(idx){if(!can('checkout'))return;captureSaleDraft();cart.splice(idx,1);renderPOS()};
-window.clearCart=function(){if(!can('checkout'))return;captureSaleDraft();cart=[];saleDraft.tendered='';renderPOS()};
+window.clearCart=function(){if(!can('checkout'))return;captureSaleDraft();cart=[];saleDraft.tendered='';saleDraft.sourceEncounterId='';renderPOS()};
 function saleSummary(){
   const x=computeSale();
   return `<div class="summary-box" style="margin-top:14px"><div class="summary-row"><span>Subtotal</span><strong>${money(x.subtotal)}</strong></div>${x.discountAmount?`<div class="summary-row"><span>${esc(saleDraft.discountType)} discount (${Number(saleDraft.discountPercent||0)}%)</span><strong>− ${money(x.discountAmount)}</strong></div>`:''}<div class="summary-row total"><span>Total Amount Due</span><span>${money(x.total)}</span></div></div>`;
@@ -919,11 +1042,13 @@ window.checkout=function(){
   const items=structuredClone(cart).map(x=>({...x,taxClass:x.taxClass||sourceTaxClass(x)}));
   for(const line of items.filter(x=>x.kind==='Pharmacy'))db.inventory.find(i=>i.id===line.refId).qty-=line.qty;
   const id=nextId('TXN',db.transactions);
-  const txn={id,uuid:newUuid(),entity,date:today(),time:new Date().toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}),patientId:saleDraft.patientId||null,buyerName:saleDraft.buyerName||patientName(saleDraft.patientId),discountType:saleDraft.discountType||'None',discountId:saleDraft.discountId||'',discountPercent:Number(saleDraft.discountPercent||0),subtotal:sale.subtotal,discountAmount:sale.discountAmount,payment:saleDraft.payment,total:sale.total,tendered,change,operator:currentStaffName(),operatorRole:activeRole,operatorUserId:currentStaffUserId(),items,officialInvoiceRef:String(saleDraft.officialInvoiceRef||'').trim(),documentType:'INTERNAL_TRANSACTION_RECORD'};
+  const sourceEncounterId=saleDraft.sourceEncounterId||'';const txn={id,uuid:newUuid(),entity,date:today(),time:new Date().toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}),patientId:saleDraft.patientId||null,buyerName:saleDraft.buyerName||patientName(saleDraft.patientId),discountType:saleDraft.discountType||'None',discountId:saleDraft.discountId||'',discountPercent:Number(saleDraft.discountPercent||0),subtotal:sale.subtotal,discountAmount:sale.discountAmount,payment:saleDraft.payment,total:sale.total,tendered,change,operator:currentStaffName(),operatorRole:activeRole,operatorUserId:currentStaffUserId(),items,officialInvoiceRef:String(saleDraft.officialInvoiceRef||'').trim(),documentType:'INTERNAL_TRANSACTION_RECORD',sourceEncounterId};
   db.transactions.unshift(txn);
   cart=[];
-  saleDraft={entity:(['Pharmacist','Pharmacy Assistant'].includes(activeRole)?'pharmacy':'clinic'),patientId:'',payment:'Cash',tendered:'',buyerName:'',buyerTin:'',buyerAddress:'',discountType:'None',discountId:'',discountPercent:'0',officialInvoiceRef:''};
+  if(sourceEncounterId){const q=(db.cashierQueue||[]).find(x=>String(x.encounterId||x.encounter_local_id)===String(sourceEncounterId));if(q){q.status='Paid';q.transactionId=id;q.transaction_local_id=id;q.paidAt=new Date().toISOString()}const c=db.consultations.find(x=>x.id===sourceEncounterId);if(c){c.cashierStatus='Paid';c.paymentTransactionId=id}}
+  saleDraft={entity:(['Pharmacist','Pharmacy Assistant'].includes(activeRole)?'pharmacy':'clinic'),patientId:'',payment:'Cash',tendered:'',buyerName:'',buyerTin:'',buyerAddress:'',discountType:'None',discountId:'',discountPercent:'0',officialInvoiceRef:'',sourceEncounterId:''};
   save(`Completed internal transaction ${id} (${money(sale.total)})`);
+  if(sourceEncounterId&&window.ACCUBackend?.configured)window.ACCUBackend.markCashierQueuePaid(sourceEncounterId,id).catch(e=>console.warn('Cashier queue status update skipped',e.message));
   showTransactionSummary(txn);
 };
 

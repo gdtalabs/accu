@@ -1,13 +1,16 @@
-# ACCU clear notification audio
+# ACCU Doctor Billing, Lab Ordering & Cashier Handoff
 
-This patch makes notification audio more reliable and easier to verify.
+Adds the client-requested clinic flow:
 
-- Real bundled WAV sound instead of synth-only audio
-- Distinct normal and urgent alert sounds
-- Full app audio volume
-- Audio pre-unlock on first user interaction
-- Web Audio fallback
-- Test Sound button in Communications Center
-- Existing vibration behavior preserved
-
-For installed PWA users, close/reopen the app after deployment so the updated service worker cache is active.
+- audible Reception -> Doctor patient-queue alerts;
+- audible Doctor -> Reception Ready/Done alerts;
+- doctor-specific queues remain separate;
+- simple queue numbers remain in the UI;
+- Physician enters exact PF;
+- Physician can select Laboratory tests directly from the service catalog;
+- selected tests create a Lab order automatically;
+- Reception receives the patient's next step and amount;
+- Cashier receives a sanitized pending-charge handoff;
+- Cashier can load PF + selected lab charges into the existing POS;
+- existing Cash / GCash / Maya / Bank Transfer / Other payment methods are retained;
+- Cashier never needs access to the physician's diagnosis/assessment to collect payment.

@@ -1,24 +1,53 @@
-# ACCU Clear Notification Sound Patch
+# ACCU Doctor Billing + Lab + Cashier Workflow Patch
 
-## GitHub / Vercel files
-Replace:
+This patch is intended to be applied after the existing ACCU doctor-specific queue / notification workflow.
+
+## 1. Replace these files in the GitHub/Vercel project root
+
 - `app.js`
-- `service-worker.js`
+- `backend.js`
+- `style.css`
 
-Add new folder/files:
+Keep your working `config.js`, `index.html`, PWA manifest, and Edge Functions unless another patch specifically tells you to change them.
+
+## 2. Keep/add the clear notification sounds
+
+Copy these folders/files if they are not already in the project:
+
 - `sounds/notification.wav`
 - `sounds/urgent.wav`
 
-No SQL, Edge Function, `config.js`, or database change is required.
+The system uses the same sound preference/Test Sound controls from the earlier notification patch.
 
-## After deploying
-1. Refresh the app. If installed as a PWA, fully close and reopen it once so the new service worker activates.
-2. Log in and tap **🔔 → Notifications → ▶ Test Sound**.
-3. Make sure **🔊 Sound** is enabled.
-4. Raise the device **media volume** (not only ringtone volume).
-5. On Android, confirm Chrome/the installed ACCU app is not muted by site/app settings.
+## 3. Run this SQL once in Supabase SQL Editor
 
-The app now uses real bundled WAV chimes at `volume=1`. It primes audio after the first user interaction/login and falls back to a synthesized beep if a WAV cannot play.
+Run:
 
-## Device limitation
-No web app can override a phone's media volume, silent/DND policies, browser permissions, or manufacturer power-saving restrictions. The Test Sound button is the quickest way to verify each device.
+`supabase/doctor-billing-lab-cashier.sql`
+
+It is written to be rerun safely.
+
+The SQL:
+- keeps Reception -> assigned Doctor queue alerts audible;
+- changes Doctor -> Reception Ready/Done alerts to audible;
+- creates a sanitized `cashier_queue` table;
+- sends Cashier an audible billing-ready alert;
+- lets Cashier mark a handoff paid without access to diagnosis/assessment data.
+
+## 4. No new Edge Function is required
+
+The existing Supabase/Auth/communications setup remains in use.
+
+## Expected workflow
+
+1. Reception adds patient under a specific doctor.
+2. Assigned doctor alone gets a sound alert.
+3. Doctor taps **Ready for Patient** -> Reception gets a sound alert.
+4. Doctor completes consultation, enters PF, and chooses:
+   - **For Payment**; or
+   - **For Laboratory then Payment** and selects exact lab tests.
+5. Reception gets a sound alert with PF/next step.
+6. If laboratory tests were selected, a Laboratory order is created automatically.
+7. Cashier gets a sound alert and sees the patient under **Pending Consultation Charges**.
+8. Cashier taps **Load Charges**, selects Cash/GCash/Maya/Bank Transfer/Other, and completes the transaction.
+9. The Cashier handoff is marked Paid.

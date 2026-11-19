@@ -42,14 +42,14 @@
   }
   async function loadWorkspace(){
     if(!client)return null;
-    const tables=['patients','practitioners','encounters','lab_orders','radiology_orders','services','lab_supplies','lab_supply_movements','transactions','pharmacy_returns','online_orders'];
+    const tables=['patients','practitioners','encounters','lab_orders','radiology_orders','services','lab_supplies','lab_supply_movements','transactions','pharmacy_returns','online_orders','cashier_queue'];
     const out={};
     for(const t of tables){const {data,error}=await client.from(t).select('*').order('created_at',{ascending:true});if(error){out[t]=[];continue}out[t]=data||[]}
     try{out.medicines=await fetchMedicineRows()}catch(e){console.warn('Medicine inventory load skipped',e.message);out.medicines=[]}
     const {data:settings,error:se}=await client.from('app_settings').select('*');if(se)throw se;
     const get=(k,fallback)=>settings?.find(x=>x.key===k)?.value||fallback;
     return {
-      patients:out.patients.map(x=>x.data), practitioners:out.practitioners.map(x=>x.data), consultations:out.encounters.map(x=>x.data), labOrders:out.lab_orders.map(x=>x.data), radiologyOrders:out.radiology_orders.map(x=>x.data), services:out.services.map(x=>x.data), inventory:out.medicines.map(x=>x.data), labSupplies:out.lab_supplies.map(x=>x.data), labSupplyMovements:out.lab_supply_movements.map(x=>x.data), transactions:out.transactions.map(x=>x.data), pharmacyReturns:out.pharmacy_returns.map(x=>x.data), onlineOrders:out.online_orders.map(x=>x.data), clinic:get('clinic',{}), pharmacyEntity:get('pharmacyEntity',{}), meta:get('meta',{}), audit:[]
+      patients:out.patients.map(x=>x.data), practitioners:out.practitioners.map(x=>x.data), consultations:out.encounters.map(x=>x.data), labOrders:out.lab_orders.map(x=>x.data), radiologyOrders:out.radiology_orders.map(x=>x.data), services:out.services.map(x=>x.data), inventory:out.medicines.map(x=>x.data), labSupplies:out.lab_supplies.map(x=>x.data), labSupplyMovements:out.lab_supply_movements.map(x=>x.data), transactions:out.transactions.map(x=>x.data), pharmacyReturns:out.pharmacy_returns.map(x=>x.data), onlineOrders:out.online_orders.map(x=>x.data), cashierQueue:(out.cashier_queue||[]).map(x=>({id:x.id,encounterId:x.encounter_local_id,encounter_local_id:x.encounter_local_id,patientId:x.patient_local_id,patient_local_id:x.patient_local_id,patientName:x.patient_name,patient_name:x.patient_name,queueNo:x.queue_no,queue_no:x.queue_no,doctorName:x.doctor_name,doctor_name:x.doctor_name,specialty:x.specialty,pfAmount:Number(x.pf_amount||0),pf_amount:Number(x.pf_amount||0),billingInstruction:x.billing_instruction,billing_instruction:x.billing_instruction,labItems:x.lab_items||[],lab_items:x.lab_items||[],labAmount:Number(x.lab_amount||0),lab_amount:Number(x.lab_amount||0),totalDue:Number(x.total_due||0),total_due:Number(x.total_due||0),status:x.status,transactionId:x.transaction_local_id,createdAt:x.created_at})), clinic:get('clinic',{}), pharmacyEntity:get('pharmacyEntity',{}), meta:get('meta',{}), audit:[]
     };
   }
   async function upsertRows(table,rows,options={}){
@@ -182,6 +182,22 @@
     const {data,error}=await client.rpc('reception_update_encounter_intake',{p_local_id:localId,p_specialty:specialty,p_practitioner_id:practitionerId||'',p_doctor:doctor||'',p_status:queueStatus,p_queue_no:queueNo||'',p_chief:chief||'',p_vitals:vitals||{}});
     if(error)throw error;return data;
   }
+  async function doctorReadyForPatient(localId){
+    if(!client)throw new Error('Backend not connected.');
+    const {data,error}=await client.rpc('doctor_ready_for_patient',{p_local_id:localId});
+    if(error)throw error;return data;
+  }
+  async function markCashierQueuePaid(encounterLocalId,transactionLocalId){
+    if(!client)throw new Error('Backend not connected.');
+    const {data,error}=await client.rpc('cashier_mark_paid',{p_encounter_local_id:encounterLocalId,p_transaction_local_id:transactionLocalId});
+    if(error)throw error;return data;
+  }
+  async function loadCashierQueue(){
+    if(!client)return [];
+    const {data,error}=await client.from('cashier_queue').select('*').order('created_at',{ascending:true});
+    if(error)throw error;
+    return (data||[]).map(x=>({id:x.id,encounterId:x.encounter_local_id,encounter_local_id:x.encounter_local_id,patientId:x.patient_local_id,patient_local_id:x.patient_local_id,patientName:x.patient_name,patient_name:x.patient_name,queueNo:x.queue_no,queue_no:x.queue_no,doctorName:x.doctor_name,doctor_name:x.doctor_name,specialty:x.specialty,pfAmount:Number(x.pf_amount||0),pf_amount:Number(x.pf_amount||0),billingInstruction:x.billing_instruction,billing_instruction:x.billing_instruction,labItems:x.lab_items||[],lab_items:x.lab_items||[],labAmount:Number(x.lab_amount||0),lab_amount:Number(x.lab_amount||0),totalDue:Number(x.total_due||0),total_due:Number(x.total_due||0),status:x.status,transactionId:x.transaction_local_id,createdAt:x.created_at}));
+  }
   async function loadAuthActivity(limit=200){
     if(!client)return [];
     const {data,error}=await client.from('auth_activity_logs').select('*').order('created_at',{ascending:false}).limit(limit);
@@ -243,5 +259,5 @@
     return communicationsChannel;
   }
   async function unsubscribeCommunications(){if(client&&communicationsChannel){await client.removeChannel(communicationsChannel);communicationsChannel=null}}
-  window.ACCUBackend={configured,client,status,getProfile,signIn,signOut,loadWorkspace,syncWorkspace,listProfiles,createStaffUser,resetStaffPassword,updateStaffProfile,changeOwnPassword,updateOnlineOrderState,refreshPharmacyState,updateConsultQueue,updateConsultIntake,loadAuthActivity,sendPatientResult,loadCommunications,loadMessageRecipients,markNotificationRead,markAllNotificationsRead,sendInternalMessage,sendDepartmentMessage,subscribeCommunications,unsubscribeCommunications};
+  window.ACCUBackend={configured,client,status,getProfile,signIn,signOut,loadWorkspace,syncWorkspace,listProfiles,createStaffUser,resetStaffPassword,updateStaffProfile,changeOwnPassword,updateOnlineOrderState,refreshPharmacyState,updateConsultQueue,updateConsultIntake,doctorReadyForPatient,markCashierQueuePaid,loadCashierQueue,loadAuthActivity,sendPatientResult,loadCommunications,loadMessageRecipients,markNotificationRead,markAllNotificationsRead,sendInternalMessage,sendDepartmentMessage,subscribeCommunications,unsubscribeCommunications};
 })();
