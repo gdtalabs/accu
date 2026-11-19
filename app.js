@@ -155,6 +155,10 @@ const DESKTOP_ALERT_KEY='accu:desktop-alerts';
 const NOTIFICATION_VIBRATION_KEY='accu:notification-vibration';
 let deferredInstallPrompt=null;
 let notificationAudioContext=null;
+let notificationAudioUnlocked=false;
+const notificationAudioNormal=new Audio('sounds/notification.wav');
+const notificationAudioUrgent=new Audio('sounds/urgent.wav');
+[notificationAudioNormal,notificationAudioUrgent].forEach(a=>{a.preload='auto';a.volume=1;});
 
 function notificationSoundEnabled(){return localStorage.getItem(NOTIFICATION_SOUND_KEY)!=='off'}
 function desktopAlertsEnabled(){return localStorage.getItem(DESKTOP_ALERT_KEY)==='on'&&('Notification' in window)&&Notification.permission==='granted'}
@@ -182,28 +186,54 @@ function updateNotificationSoundUI(){
 }
 function unlockNotificationAudio(){
   try{
-    if(!notificationAudioContext)notificationAudioContext=new (window.AudioContext||window.webkitAudioContext)();
-    if(notificationAudioContext.state==='suspended')notificationAudioContext.resume();
+    if(!notificationAudioContext&&('AudioContext' in window||'webkitAudioContext' in window))notificationAudioContext=new (window.AudioContext||window.webkitAudioContext)();
+    if(notificationAudioContext?.state==='suspended')notificationAudioContext.resume();
   }catch{}
+  if(notificationAudioUnlocked)return;
+  notificationAudioUnlocked=true;
+  // Prime both real audio files during a user gesture so later realtime alerts can play.
+  [notificationAudioNormal,notificationAudioUrgent].forEach(a=>{
+    try{
+      const oldMuted=a.muted;a.muted=true;a.currentTime=0;
+      const r=a.play();
+      if(r&&typeof r.then==='function')r.then(()=>{a.pause();a.currentTime=0;a.muted=oldMuted}).catch(()=>{a.muted=oldMuted});
+      else {a.pause();a.currentTime=0;a.muted=oldMuted}
+    }catch{}
+  });
 }
-function playNotificationSound(notification={}){
-  if(!notificationSoundEnabled())return;
+function playSynthFallback(notification={}){
   try{
     unlockNotificationAudio();
     const ctx=notificationAudioContext;if(!ctx)return;
     const now=ctx.currentTime;
     const warning=notification.severity==='warning'||notification.requires_ack;
-    const notes=warning?[659.25,783.99]:[523.25,659.25];
+    const notes=warning?[659.25,783.99,1046.50]:[783.99,1046.50];
     notes.forEach((freq,i)=>{
       const osc=ctx.createOscillator(),gain=ctx.createGain();
-      osc.type='sine';osc.frequency.value=freq;
-      gain.gain.setValueAtTime(0.0001,now+i*.11);
-      gain.gain.exponentialRampToValueAtTime(warning?.075:.05,now+i*.11+.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001,now+i*.11+.16);
-      osc.connect(gain);gain.connect(ctx.destination);osc.start(now+i*.11);osc.stop(now+i*.11+.18);
+      osc.type='triangle';osc.frequency.value=freq;
+      gain.gain.setValueAtTime(0.0001,now+i*.14);
+      gain.gain.exponentialRampToValueAtTime(warning?.15:.12,now+i*.14+.018);
+      gain.gain.exponentialRampToValueAtTime(0.0001,now+i*.14+.22);
+      osc.connect(gain);gain.connect(ctx.destination);osc.start(now+i*.14);osc.stop(now+i*.14+.24);
     });
   }catch{}
 }
+function playNotificationSound(notification={}){
+  if(!notificationSoundEnabled())return;
+  const warning=notification.severity==='warning'||notification.requires_ack;
+  const audio=warning?notificationAudioUrgent:notificationAudioNormal;
+  try{
+    unlockNotificationAudio();
+    audio.pause();audio.currentTime=0;audio.muted=false;audio.volume=1;
+    const result=audio.play();
+    if(result&&typeof result.catch==='function')result.catch(()=>playSynthFallback(notification));
+  }catch{playSynthFallback(notification)}
+}
+window.testNotificationSound=function(kind='normal'){
+  const sample=kind==='urgent'?{severity:'warning',requires_ack:true}:{severity:'info'};
+  playNotificationSound(sample);
+  playNotificationVibration(sample);
+};
 function showDesktopAlert(notification={}){
   if(!desktopAlertsEnabled()||!document.hidden)return;
   try{
@@ -221,7 +251,7 @@ function handleRealtimeCommunication(kind,row){
 }
 window.toggleNotificationSound=function(){
   localStorage.setItem(NOTIFICATION_SOUND_KEY,notificationSoundEnabled()?'off':'on');
-  if(notificationSoundEnabled())unlockNotificationAudio();
+  if(notificationSoundEnabled()){unlockNotificationAudio();setTimeout(()=>testNotificationSound('normal'),60)}
   updateNotificationSoundUI();
 };
 window.toggleDesktopAlerts=async function(){
@@ -286,7 +316,7 @@ window.openCommunications=function(tab='notifications'){
   let body='';
   if(tab==='notifications'){
     const desktopOn=desktopAlertsEnabled();
-    body=`<div class="communication-toolbar"><div><strong>${unreadNotifications().length} unread</strong></div><div class="inline-actions"><button class="small-btn communication-compose-shortcut" onclick="openCommunications('compose')">＋ Message</button><button class="small-btn" onclick="toggleNotificationSound()">${notificationSoundEnabled()?'🔊 Sound':'🔇 Sound'}</button><button class="small-btn" onclick="toggleNotificationVibration()">${notificationVibrationEnabled()?'📳 Vibration':'📴 Vibration'}</button><button class="small-btn ${desktopOn?'active-setting':''}" onclick="toggleDesktopAlerts()">${desktopOn?'Desktop alerts on':'Desktop alerts'}</button>${notifications.length?'<button class="small-btn" onclick="markAllCommunicationRead()">Mark all read</button>':''}</div></div><div class="communication-list">${notifications.map(n=>{const r=readMap.get(n.id),unread=!r,ctx=communicationContextLabel(n);return `<article class="communication-item ${unread?'unread':''}"><div class="communication-icon">${notificationIcon(n)}</div><div class="communication-copy"><div class="communication-meta"><span class="badge blue">${esc(n.department)}</span><span>${new Date(n.created_at).toLocaleString('en-PH')}</span></div><strong>${esc(n.title)}</strong><p>${esc(n.message||'')}</p>${ctx?`<small class="muted">${esc(ctx)}</small>`:''}<div class="inline-actions" style="margin-top:8px">${unread?`<button class="small-btn" onclick="markCommunicationRead('${n.id}',${n.requires_ack?'true':'false'})">${n.requires_ack?'Acknowledge':'Mark read'}</button>`:''}${n.entity_type?`<button class="small-btn" onclick="openCommunicationContext('${n.id}')">Open</button>`:''}</div></div></article>`}).join('')||'<div class="empty">No notifications yet.</div>'}</div>`;
+    body=`<div class="communication-toolbar"><div><strong>${unreadNotifications().length} unread</strong></div><div class="inline-actions"><button class="small-btn communication-compose-shortcut" onclick="openCommunications('compose')">＋ Message</button><button class="small-btn" onclick="toggleNotificationSound()">${notificationSoundEnabled()?'🔊 Sound':'🔇 Sound'}</button><button class="small-btn" onclick="testNotificationSound('normal')">▶ Test Sound</button><button class="small-btn" onclick="toggleNotificationVibration()">${notificationVibrationEnabled()?'📳 Vibration':'📴 Vibration'}</button><button class="small-btn ${desktopOn?'active-setting':''}" onclick="toggleDesktopAlerts()">${desktopOn?'Desktop alerts on':'Desktop alerts'}</button>${notifications.length?'<button class="small-btn" onclick="markAllCommunicationRead()">Mark all read</button>':''}</div></div><div class="communication-list">${notifications.map(n=>{const r=readMap.get(n.id),unread=!r,ctx=communicationContextLabel(n);return `<article class="communication-item ${unread?'unread':''}"><div class="communication-icon">${notificationIcon(n)}</div><div class="communication-copy"><div class="communication-meta"><span class="badge blue">${esc(n.department)}</span><span>${new Date(n.created_at).toLocaleString('en-PH')}</span></div><strong>${esc(n.title)}</strong><p>${esc(n.message||'')}</p>${ctx?`<small class="muted">${esc(ctx)}</small>`:''}<div class="inline-actions" style="margin-top:8px">${unread?`<button class="small-btn" onclick="markCommunicationRead('${n.id}',${n.requires_ack?'true':'false'})">${n.requires_ack?'Acknowledge':'Mark read'}</button>`:''}${n.entity_type?`<button class="small-btn" onclick="openCommunicationContext('${n.id}')">Open</button>`:''}</div></div></article>`}).join('')||'<div class="empty">No notifications yet.</div>'}</div>`;
   }else if(tab==='inbox'){
     body=`<div class="communication-toolbar communication-inbox-toolbar"><div><strong>Internal messages</strong></div><div class="inline-actions"><button class="small-btn communication-compose-shortcut" onclick="openCommunications('compose')">＋ Message</button></div></div><div class="communication-list">${messages.map(m=>`<article class="communication-item"><div class="communication-icon">💬</div><div class="communication-copy"><div class="communication-meta"><span class="badge green">To ${esc(messageTargetLabel(m))}</span><span>${new Date(m.created_at).toLocaleString('en-PH')}</span></div><strong>${esc(m.subject||'Internal message')}</strong><p>${esc(m.body)}</p><small class="muted">From ${esc(messageSenderLabel(m))}${m.context_local_id?` · ${esc(m.context_type||'Reference')} ${esc(m.context_local_id)}`:''}</small><div class="inline-actions" style="margin-top:8px"><button class="small-btn" onclick="replyDepartmentMessage('${m.id}')">Reply</button></div></div></article>`).join('')||'<div class="empty">No internal messages yet.</div>'}</div>`;
   }else{

@@ -1,33 +1,24 @@
-# ACCU PWA + Sound + Vibration — Commit Guide
+# ACCU Clear Notification Sound Patch
 
-Replace/add these files in the root of the ACCU GitHub/Vercel project:
-
-## Replace
-- `index.html`
+## GitHub / Vercel files
+Replace:
 - `app.js`
-- `style.css`
-
-## Add
-- `manifest.webmanifest`
 - `service-worker.js`
-- `accu-logo.jpeg` (only if the repository does not already contain it)
-- `icons/icon-192.png`
-- `icons/icon-512.png`
 
-Do **not** replace your working `config.js`, `backend.js`, Supabase SQL, or Edge Functions.
+Add new folder/files:
+- `sounds/notification.wav`
+- `sounds/urgent.wav`
 
-After commit/deploy, hard-refresh once so the service worker and new manifest are registered.
+No SQL, Edge Function, `config.js`, or database change is required.
 
-## Android
-Open the production HTTPS URL in Chrome. An **Install ACCU App** button should appear on the sign-in screen when Chrome considers it installable. Chrome's menu may also show **Install app / Add to Home screen**.
+## After deploying
+1. Refresh the app. If installed as a PWA, fully close and reopen it once so the new service worker activates.
+2. Log in and tap **🔔 → Notifications → ▶ Test Sound**.
+3. Make sure **🔊 Sound** is enabled.
+4. Raise the device **media volume** (not only ringtone volume).
+5. On Android, confirm Chrome/the installed ACCU app is not muted by site/app settings.
 
-## iPhone/iPad
-Use the browser Share menu → **Add to Home Screen**. The in-page install button displays this instruction because iOS does not expose the same programmatic install prompt.
+The app now uses real bundled WAV chimes at `volume=1`. It primes audio after the first user interaction/login and falls back to a synthesized beep if a WAV cannot play.
 
-## Notification behavior
-- Sound: enabled by default; user can mute it.
-- Vibration: enabled by default where `navigator.vibrate()` is supported.
-- Communications Center → Notifications contains a Vibration toggle.
-- Installed PWA + Realtime alerts still require the app/browser process to be active. True notifications while fully closed require Web Push subscription/server delivery, which is not part of this patch.
-
-No new Supabase migration or Edge Function deployment is required for this patch.
+## Device limitation
+No web app can override a phone's media volume, silent/DND policies, browser permissions, or manufacturer power-saving restrictions. The Test Sound button is the quickest way to verify each device.
