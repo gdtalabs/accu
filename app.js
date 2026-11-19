@@ -221,11 +221,16 @@ window.toggleDesktopAlerts=async function(){
 function communicationReadMap(){return new Map((communications.reads||[]).map(r=>[r.notification_id,r]))}
 function unreadNotifications(){const m=communicationReadMap();return (communications.notifications||[]).filter(n=>!m.has(n.id))}
 function updateCommunicationBadge(){
-  const bell=document.getElementById('communicationBell'),badge=document.getElementById('notificationBadge');
-  if(!bell||!badge)return;
   const count=unreadNotifications().length;
-  badge.textContent=count>99?'99+':String(count);badge.hidden=count===0;
-  bell.classList.toggle('has-unread',count>0);
+  [
+    [document.getElementById('communicationBell'),document.getElementById('notificationBadge')],
+    [document.getElementById('mobileCommunicationBell'),document.getElementById('mobileNotificationBadge')]
+  ].forEach(([bell,badge])=>{
+    if(!bell||!badge)return;
+    badge.textContent=count>99?'99+':String(count);
+    badge.hidden=count===0;
+    bell.classList.toggle('has-unread',count>0);
+  });
 }
 async function refreshCommunications({quiet=false}={}){
   if(!window.ACCUBackend?.configured||!window.ACCUBackend.status.user)return;
@@ -1082,6 +1087,7 @@ document.getElementById('todayLabel').textContent=new Date().toLocaleDateString(
 document.querySelectorAll('.nav-item').forEach(btn=>btn.addEventListener('click',()=>showView(btn.dataset.view)));
 document.getElementById('quickSaleBtn').onclick=runQuickAction;
 const communicationBell=document.getElementById('communicationBell');if(communicationBell)communicationBell.onclick=()=>openCommunications('notifications');
+const mobileCommunicationBell=document.getElementById('mobileCommunicationBell');if(mobileCommunicationBell)mobileCommunicationBell.onclick=()=>openCommunications('notifications');
 const notificationSoundToggle=document.getElementById('notificationSoundToggle');if(notificationSoundToggle)notificationSoundToggle.onclick=window.toggleNotificationSound;
 document.addEventListener('pointerdown',unlockNotificationAudio,{once:true});
 document.getElementById('mobileQuickBtn').onclick=runQuickAction;
@@ -1121,6 +1127,7 @@ async function hydrateFromBackend(){
     if(!document.getElementById('signOutBtn')){const btn=document.createElement('button');btn.id='signOutBtn';btn.className='ghost';btn.textContent='Sign out';btn.onclick=async()=>{await b.unsubscribeCommunications?.();await b.signOut();localStorage.removeItem(STORAGE_KEY);location.reload()};document.querySelector('.sidebar-footer').appendChild(btn)}
     document.getElementById('authGate').hidden=true;renderAll();updateRoleUI();updateBackendBadge('Supabase connected','live');
     const bell=document.getElementById('communicationBell');if(bell)bell.hidden=false;
+    const mobileBell=document.getElementById('mobileCommunicationBell');if(mobileBell)mobileBell.hidden=false;
     const soundBtn=document.getElementById('notificationSoundToggle');if(soundBtn)soundBtn.hidden=false;updateNotificationSoundUI();
     await refreshCommunications({quiet:true});startCommunicationRealtime();
   }catch(e){console.error(e);updateBackendBadge('Backend error','error');document.getElementById('authGate').hidden=false;document.getElementById('authError').textContent=e.message||'Unable to connect.'}

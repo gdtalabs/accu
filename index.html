@@ -17,7 +17,12 @@
         <span id="mobileRoleLabel">Administrator</span>
       </div>
     </div>
-    <button id="mobileQuickBtn" class="mobile-quick" aria-label="Quick action">＋</button>
+    <div class="mobile-header-actions">
+      <button id="mobileCommunicationBell" class="notification-bell mobile-notification-bell" type="button" hidden aria-label="Notifications and department inbox" title="Notifications & Department Inbox">
+        <span class="bell-icon">🔔</span><span id="mobileNotificationBadge" class="notification-count" hidden>0</span>
+      </button>
+      <button id="mobileQuickBtn" class="mobile-quick" aria-label="Quick action">＋</button>
+    </div>
   </header>
 
   <div id="drawerBackdrop" class="drawer-backdrop"></div>

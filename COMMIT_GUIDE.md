@@ -1,19 +1,23 @@
-# Commit Guide — Mobile Messaging
+# ACCU Mobile Notification Entry Patch
 
-In the existing ACCU GitHub repository, replace these root files:
+Replace these files in the root of your current `accu` GitHub repo:
 
+- `index.html`
 - `app.js`
 - `style.css`
 
 Do **not** replace `config.js`.
 
-No new Supabase SQL migration is required for this patch. It assumes the existing Communications Center (`notifications`, `notification_reads`, `department_messages`) is already installed.
+No Supabase SQL or Edge Function changes are needed.
 
-After committing and redeploying, test on phone:
+## Where messaging is on phone
+After login, look at the fixed top header. You will see:
 
-1. Sign in.
-2. Tap the notification bell.
-3. Verify the three tabs: Notifications, Department Inbox, Send Message.
-4. From Notifications or Inbox, tap `+ Message`.
-5. Send a test message to another department.
-6. Confirm the compose form and Send button remain fully visible on a narrow screen.
+`☰   ACCU logo   🔔   ＋`
+
+Tap **🔔** to open Communications Center. It contains:
+- Notifications
+- Department Inbox
+- Send Message
+
+The red badge on the mobile bell shows unread notifications.

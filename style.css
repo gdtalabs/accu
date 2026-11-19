@@ -511,3 +511,19 @@ button.small{min-height:32px;padding:6px 10px;font-size:12px}
   #communicationsPanel .communication-item{grid-template-columns:30px minmax(0,1fr);gap:9px;padding:10px}
   #communicationsPanel .communication-icon{width:30px;height:30px;font-size:15px}
 }
+
+
+/* Mobile communications entry point */
+.mobile-header-actions{display:flex;align-items:center;gap:7px;flex:0 0 auto}
+.mobile-notification-bell{display:none}
+@media(max-width:920px){
+  .mobile-notification-bell:not([hidden]){display:inline-flex}
+  .mobile-header-actions .notification-bell{min-width:42px;width:42px;height:42px}
+}
+@media(max-width:390px){
+  .mobile-header{gap:6px}
+  .mobile-brand{max-width:48vw}
+  .mobile-brand img{width:86px}
+  .mobile-header-actions{gap:5px}
+  .mobile-header-actions .notification-bell,.mobile-header-actions .mobile-quick{min-width:38px;width:38px;height:38px;border-radius:11px}
+}

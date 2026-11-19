@@ -1,18 +1,1 @@
-# ACCU Mobile Messaging Patch
-
-This patch improves the Communications Center on phones and small tablets.
-
-## Changes
-- Send Message remains accessible on phone view.
-- Adds a visible `+ Message` shortcut in Notifications and Department Inbox.
-- Communications tabs can scroll horizontally on narrow screens.
-- Communications Center uses a full-screen mobile layout.
-- Compose fields collapse to one column.
-- Send/Cancel actions stay visible at the bottom of the compose screen.
-- No database or Edge Function changes are required.
-
-## Files to replace
-- `app.js`
-- `style.css`
-
-Keep your existing `config.js`, `backend.js`, SQL setup, and Edge Functions.
+Adds a dedicated mobile notification bell to the ACCU phone header. The previous communications patch made the modal mobile-friendly but the desktop bell was hidden on small screens. This patch exposes a separate mobile bell and synchronizes its unread badge with the desktop bell.
